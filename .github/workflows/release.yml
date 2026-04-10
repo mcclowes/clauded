@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: make generate
+
+      - name: Run tests
+        run: make test
+
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          echo -n "$CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERTIFICATE_PATH" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+      - name: Build and sign release
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcodebuild -project Clauded/Clauded.xcodeproj \
+            -scheme Clauded \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGNING_ALLOWED=YES \
+            OTHER_CODE_SIGN_FLAGS="--timestamp" \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+            build
+
+      - name: Notarize app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          BUILD_DIR=$(xcodebuild -project Clauded/Clauded.xcodeproj -scheme Clauded -configuration Release -showBuildSettings 2>/dev/null | grep -m1 'BUILT_PRODUCTS_DIR' | awk '{print $NF}')
+          APP_PATH="$BUILD_DIR/Clauded.app"
+
+          # Create zip for notarization
+          ditto -c -k --keepParent "$APP_PATH" "$BUILD_DIR/Clauded.zip"
+
+          # Submit for notarization
+          SUBMISSION_OUTPUT=$(xcrun notarytool submit "$BUILD_DIR/Clauded.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$TEAM_ID" \
+            --wait 2>&1) || true
+          echo "$SUBMISSION_OUTPUT"
+
+          SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | grep -m1 'id:' | awk '{print $NF}')
+
+          if echo "$SUBMISSION_OUTPUT" | grep -q "status: Invalid"; then
+            echo "Notarization failed — fetching log:"
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --apple-id "$APPLE_ID" \
+              --password "$APPLE_ID_PASSWORD" \
+              --team-id "$TEAM_ID"
+            exit 1
+          fi
+
+          # Staple the ticket to the app
+          xcrun stapler staple "$APP_PATH"
+
+          # Re-create zip with stapled app
+          rm "$BUILD_DIR/Clauded.zip"
+          ditto -c -k --keepParent "$APP_PATH" "$BUILD_DIR/Clauded.zip"
+
+      - name: Find artifact
+        id: artifact
+        run: |
+          BUILD_DIR=$(xcodebuild -project Clauded/Clauded.xcodeproj -scheme Clauded -configuration Release -showBuildSettings 2>/dev/null | grep -m1 'BUILT_PRODUCTS_DIR' | awk '{print $NF}')
+          echo "zip_path=${BUILD_DIR}/Clauded.zip" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "${BUILD_DIR}/Clauded.zip" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          files: ${{ steps.artifact.outputs.zip_path }}
+          body: |
+            ## Clauded ${{ github.ref_name }}
+
+            **Install via Homebrew:**
+            ```
+            brew install mcclowes/clauded/clauded
+            ```
+
+            **SHA256:** `${{ steps.artifact.outputs.sha256 }}`
+          draft: false
+          prerelease: false
+
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          CASK_CONTENT=$(cat <<CASKEOF
+          cask "clauded" do
+            version "${{ github.ref_name }}"
+            sha256 "${{ steps.artifact.outputs.sha256 }}"
+            url "https://github.com/mcclowes/clauded/releases/download/${{ github.ref_name }}/Clauded.zip"
+            name "Clauded"
+            desc "Native macOS menu bar app for managing Claude Code instances"
+            homepage "https://github.com/mcclowes/clauded"
+
+            depends_on macos: ">= :sequoia"
+
+            app "Clauded.app"
+
+            zap trash: [
+              "~/Library/Application Support/Clauded",
+              "~/Library/Preferences/com.mcclowes.clauded.plist",
+            ]
+          end
+          CASKEOF
+          )
+
+          FILE_SHA=$(gh api repos/mcclowes/homebrew-clauded/contents/Casks/clauded.rb -q .sha 2>/dev/null || echo "")
+
+          if [ -n "$FILE_SHA" ]; then
+            gh api repos/mcclowes/homebrew-clauded/contents/Casks/clauded.rb \
+              -X PUT \
+              -f message="Update clauded to ${{ github.ref_name }}" \
+              -f content="$(echo "$CASK_CONTENT" | base64)" \
+              -f sha="$FILE_SHA"
+          else
+            gh api repos/mcclowes/homebrew-clauded/contents/Casks/clauded.rb \
+              -X PUT \
+              -f message="Add clauded ${{ github.ref_name }}" \
+              -f content="$(echo "$CASK_CONTENT" | base64)"
+          fi
+
+      - name: Clean up keychain
+        if: always()
+        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true

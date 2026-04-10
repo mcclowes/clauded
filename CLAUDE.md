@@ -28,6 +28,7 @@ Clauded/
       InstanceRegistry.swift # @Observable live instance list + attention count
       HookDaemon.swift       # Unix domain socket listener (Network.framework)
       HookInstaller.swift    # Read-parse-merge-write ~/.claude/settings.json
+      HookInstallState.swift # @Observable wrapper around HookInstaller for SwiftUI
       StatusBarController.swift # NSStatusItem + popover
       TerminalFocuser.swift  # AppleScript-based window focus
     Views/
@@ -39,7 +40,6 @@ Clauded/
     HookInstallerTests.swift
     InstanceRegistryTests.swift
     HookEventTests.swift
-    Mocks.swift
   Resources/
     Info.plist               # LSUIElement=true
     Clauded.entitlements
