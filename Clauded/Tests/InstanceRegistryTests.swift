@@ -57,6 +57,35 @@ final class InstanceRegistryTests: XCTestCase {
         XCTAssertEqual(sorted.first?.id, "old", "Awaiting-input instance should sort first")
     }
 
+    func testReapDeadInstancesRemovesSessionsWhoseProcessIsGone() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "alive", project: "/a", pid: 100))
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "dead", project: "/b", pid: 200))
+
+        registry.reapDeadInstances(isAlive: { pid in pid == 100 })
+
+        XCTAssertEqual(registry.instances.map(\.id), ["alive"])
+    }
+
+    func testReapDeadInstancesKeepsInstancesWithNoPid() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "nopid", project: "/a", pid: nil))
+
+        registry.reapDeadInstances(isAlive: { _ in false })
+
+        XCTAssertEqual(registry.instances.count, 1, "Instances without a pid should be left alone")
+    }
+
+    func testReapDeadInstancesIsNoopWhenAllAlive() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a", pid: 1))
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s2", project: "/b", pid: 2))
+
+        registry.reapDeadInstances(isAlive: { _ in true })
+
+        XCTAssertEqual(registry.instances.count, 2)
+    }
+
     func testProjectNameUsesLastPathComponent() {
         let registry = InstanceRegistry()
         registry.apply(
@@ -69,13 +98,14 @@ final class InstanceRegistryTests: XCTestCase {
         kind: HookEventKind,
         id: String,
         project: String,
-        at date: Date = Date()
+        at date: Date = Date(),
+        pid: Int32? = 1234
     ) -> HookEvent {
         HookEvent(
             kind: kind,
             sessionId: id,
             projectDir: project,
-            pid: 1234,
+            pid: pid,
             timestamp: date,
             message: nil
         )
