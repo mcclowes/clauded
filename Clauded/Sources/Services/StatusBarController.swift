@@ -87,6 +87,9 @@ final class StatusBarController {
 
     func show() {
         guard let button = statusItem?.button else { return }
+        // Reap on open so the user never sees a stale row — covers the case where a
+        // terminal was killed between ticks of the background reaper.
+        registry.reapDeadInstances()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
         popover.contentViewController?.view.window?.makeKey()
