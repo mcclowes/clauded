@@ -1,0 +1,36 @@
+import Foundation
+
+/// Lifecycle state of a single Claude Code session as understood by Clauded.
+///
+/// The source of truth is the stream of hook events fired by Claude Code itself.
+/// We never poll the process directly — states transition purely in response to
+/// events from the notify shim.
+enum InstanceState: String, Codable {
+    /// Session has started but no prompt has been submitted yet.
+    case idle
+    /// A prompt was submitted and the agent is working.
+    case working
+    /// The agent has fired a Notification hook — waiting on the user (permission prompt or idle input).
+    case awaitingInput
+    /// Agent finished its turn (Stop hook) but session is still alive.
+    case finished
+    /// Session ended (SessionEnd hook).
+    case stopped
+}
+
+struct ClaudeInstance: Identifiable, Equatable {
+    let id: String
+    var projectDir: String
+    var pid: Int32?
+    var state: InstanceState
+    var lastActivity: Date
+    var lastMessage: String?
+
+    var projectName: String {
+        (projectDir as NSString).lastPathComponent
+    }
+
+    var needsAttention: Bool {
+        state == .awaitingInput
+    }
+}

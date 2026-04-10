@@ -1,0 +1,29 @@
+## Build artifacts
+.build/
+DerivedData/
+build/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+## Generated Xcode project (regenerate via `make generate`)
+Clauded/Clauded.xcodeproj/
+
+## Swift Package Manager
+Package.resolved
+.swiftpm/
+
+## macOS
+.DS_Store
+
+## Coverage
+*.profraw
+*.profdata
+
+## IDE
+.vscode/
+.idea/
+
+## Release artifacts
+*.zip
+*.dmg
