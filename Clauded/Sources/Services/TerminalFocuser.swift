@@ -33,13 +33,13 @@ enum TerminalFocuser {
         }
         guard let app = NSRunningApplication(processIdentifier: terminalPid) else { return }
         if app.bundleIdentifier == appleTerminalBundleId, let tty = controllingTTY(of: pid) {
-            focusAppleTerminalTab(tty: tty)
+            focusAppleTerminalTab(tty: tty, fallback: app)
             return
         }
         app.activate(options: [])
     }
 
-    private static func focusAppleTerminalTab(tty: String) {
+    private static func focusAppleTerminalTab(tty: String, fallback: NSRunningApplication) {
         let escapedTTY = tty.replacingOccurrences(of: "\"", with: "\\\"")
         let source = """
         tell application "Terminal"
@@ -61,10 +61,10 @@ enum TerminalFocuser {
         Task.detached(priority: .userInitiated) {
             var error: NSDictionary?
             NSAppleScript(source: source)?.executeAndReturnError(&error)
-            if let error {
-                let logger = Logger(subsystem: "com.mcclowes.clauded", category: "TerminalFocuser")
-                logger.error("Terminal.app tab focus AppleScript failed: \(error)")
-            }
+            guard let error else { return }
+            let logger = Logger(subsystem: "com.mcclowes.clauded", category: "TerminalFocuser")
+            logger.error("Terminal.app tab focus AppleScript failed: \(error)")
+            await MainActor.run { fallback.activate(options: []) }
         }
     }
 
