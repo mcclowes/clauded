@@ -279,6 +279,78 @@ final class HookInstallerTests: XCTestCase {
         XCTAssertTrue(ours[0].hasPrefix(shimPath))
     }
 
+    // MARK: - verify()
+
+    func testVerifyReportsAllMissingWhenFileAbsent() {
+        let installer = HookInstaller(settingsURL: settingsURL, shimPath: shimPath)
+        let result = installer.verify()
+        XCTAssertTrue(result.healthyEvents.isEmpty)
+        XCTAssertTrue(result.staleEvents.isEmpty)
+        XCTAssertEqual(
+            result.missingEvents,
+            Set(HookInstaller.managedEvents.map(\.claudeCodeEvent))
+        )
+        XCTAssertFalse(result.isHealthy)
+        XCTAssertTrue(result.needsAttention)
+    }
+
+    func testVerifyReportsAllHealthyAfterInstall() throws {
+        let installer = HookInstaller(settingsURL: settingsURL, shimPath: shimPath)
+        _ = try installer.install()
+        let result = installer.verify()
+        XCTAssertEqual(
+            result.healthyEvents,
+            Set(HookInstaller.managedEvents.map(\.claudeCodeEvent))
+        )
+        XCTAssertTrue(result.missingEvents.isEmpty)
+        XCTAssertTrue(result.staleEvents.isEmpty)
+        XCTAssertTrue(result.isHealthy)
+    }
+
+    func testVerifyReportsMissingEventsWhenUserStripsOne() throws {
+        let installer = HookInstaller(settingsURL: settingsURL, shimPath: shimPath)
+        _ = try installer.install()
+
+        // Simulate the user hand-editing settings.json to remove the Notification block.
+        var root = try loadSettings()
+        var hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
+        hooks.removeValue(forKey: "Notification")
+        root["hooks"] = hooks
+        try writeSettings(root)
+
+        let result = installer.verify()
+        XCTAssertFalse(result.isHealthy)
+        XCTAssertTrue(result.missingEvents.contains("Notification"))
+        XCTAssertFalse(result.healthyEvents.contains("Notification"))
+        XCTAssertTrue(result.healthyEvents.contains("SessionStart"))
+    }
+
+    func testVerifyReportsStaleWhenShimPathDrifts() throws {
+        let oldInstaller = HookInstaller(settingsURL: settingsURL, shimPath: "/old/path/clauded-notify")
+        _ = try oldInstaller.install()
+
+        let newInstaller = HookInstaller(settingsURL: settingsURL, shimPath: "/new/path/clauded-notify")
+        let result = newInstaller.verify()
+
+        XCTAssertFalse(result.isHealthy)
+        XCTAssertTrue(result.healthyEvents.isEmpty)
+        XCTAssertEqual(
+            result.staleEvents,
+            Set(HookInstaller.managedEvents.map(\.claudeCodeEvent))
+        )
+    }
+
+    func testVerifyTreatsUnparseableFileAsAllMissing() throws {
+        try "garbage {{".write(to: settingsURL, atomically: true, encoding: .utf8)
+        let installer = HookInstaller(settingsURL: settingsURL, shimPath: shimPath)
+        let result = installer.verify()
+        XCTAssertEqual(
+            result.missingEvents,
+            Set(HookInstaller.managedEvents.map(\.claudeCodeEvent))
+        )
+        XCTAssertTrue(result.healthyEvents.isEmpty)
+    }
+
     func testShimMissingValidationThrows() {
         let installer = HookInstaller(
             settingsURL: settingsURL,

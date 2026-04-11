@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.daemon = daemon
         Task { await daemon.start() }
 
-        let statusBar = StatusBarController(registry: registry)
+        let statusBar = StatusBarController(registry: registry, hookInstallState: hookInstallState)
         statusBarController = statusBar
 
         let responder = AutoYesResponder(sender: AppleScriptKeystrokeSender())
@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         .environment(registry)
+        .environment(hookInstallState)
 
         statusBar.setup(contentView: panel)
 
@@ -63,6 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // path changed after app move).
             hookInstallState.toggleInstallation()
         }
+
+        // Keep an eye on settings.json after launch: if the user (or another tool)
+        // strips our entries, `status` flips and the menu bar/popover will show a
+        // warning banner with a one-click reinstall. No auto-heal at this point —
+        // a silent rewrite of settings.json behind the user's back is worse than a
+        // visible warning.
+        hookInstallState.startHealthCheck()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
