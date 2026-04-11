@@ -34,6 +34,14 @@ final class InstanceRegistry {
     @ObservationIgnored
     private var recentlyReaped: [String: Date] = [:]
 
+    /// Injectable clock so tests can drive grace-window expiry without `Thread.sleep`.
+    @ObservationIgnored
+    private let now: () -> Date
+
+    init(now: @escaping () -> Date = { Date() }) {
+        self.now = now
+    }
+
     /// Number of instances currently waiting on the user. Drives the menu bar badge.
     var needsAttentionCount: Int {
         instances.count(where: { $0.needsAttention })
@@ -52,7 +60,7 @@ final class InstanceRegistry {
         pruneRecentlyReaped()
 
         if let reapedAt = recentlyReaped[event.sessionId],
-           Date().timeIntervalSince(reapedAt) < Self.reapedEventGraceWindow
+           now().timeIntervalSince(reapedAt) < Self.reapedEventGraceWindow
         {
             Self.logger.debug("Dropping late event for reaped session: \(event.sessionId, privacy: .public)")
             return
@@ -159,9 +167,9 @@ final class InstanceRegistry {
             return false
         }
 
-        let now = Date()
+        let reapedAt = now()
         for id in reapedIds {
-            recentlyReaped[id] = now
+            recentlyReaped[id] = reapedAt
         }
 
         let removed = before - instances.count
@@ -193,7 +201,7 @@ final class InstanceRegistry {
     }
 
     private func pruneRecentlyReaped() {
-        let cutoff = Date().addingTimeInterval(-Self.reapedEventGraceWindow)
+        let cutoff = now().addingTimeInterval(-Self.reapedEventGraceWindow)
         recentlyReaped = recentlyReaped.filter { $0.value > cutoff }
     }
 
