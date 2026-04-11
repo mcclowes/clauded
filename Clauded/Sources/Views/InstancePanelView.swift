@@ -58,14 +58,23 @@ struct InstancePanelView: View {
         ScrollView {
             LazyVStack(spacing: 4) {
                 ForEach(registry.sortedInstances) { instance in
-                    InstanceRow(instance: instance) {
-                        // Close the popover first so macOS's activation-restoration has
-                        // already flushed by the time we bring the terminal to the front;
-                        // otherwise the popover close fires after our activate and reverts
-                        // focus to whichever app was frontmost before the popover opened.
-                        onClose()
-                        TerminalFocuser.focus(pid: instance.pid)
-                    }
+                    InstanceRow(
+                        instance: instance,
+                        onTap: {
+                            // Close the popover first so macOS's activation-restoration has
+                            // already flushed by the time we bring the terminal to the front;
+                            // otherwise the popover close fires after our activate and reverts
+                            // focus to whichever app was frontmost before the popover opened.
+                            onClose()
+                            TerminalFocuser.focus(pid: instance.pid)
+                        },
+                        onToggleAutoYes: {
+                            registry.setAutoYes(
+                                sessionId: instance.id,
+                                enabled: !instance.autoYesEnabled
+                            )
+                        }
+                    )
                 }
             }
             .padding(8)

@@ -3,6 +3,7 @@ import SwiftUI
 struct InstanceRow: View {
     let instance: ClaudeInstance
     let onTap: () -> Void
+    let onToggleAutoYes: () -> Void
 
     @State private var isHovered = false
 
@@ -28,6 +29,7 @@ struct InstanceRow: View {
                         .lineLimit(1)
                 }
                 Spacer()
+                autoYesToggle
                 Text(relativeTime)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -44,6 +46,20 @@ struct InstanceRow: View {
         .onHover { hovering in
             isHovered = hovering
         }
+    }
+
+    private var autoYesToggle: some View {
+        Button {
+            onToggleAutoYes()
+        } label: {
+            Image(systemName: instance.autoYesEnabled ? "bolt.fill" : "bolt.slash")
+                .font(.caption)
+                .foregroundStyle(instance.autoYesEnabled ? Color.yellow : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(instance.autoYesEnabled
+            ? "Auto-yes is on for this session — Clauded will answer permission prompts automatically"
+            : "Auto-yes is off — click to let Clauded answer permission prompts for this session")
     }
 
     private var stateIndicator: some View {
