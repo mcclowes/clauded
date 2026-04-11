@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(HookInstallState.self) private var hookState
+    @Environment(LaunchAtLoginController.self) private var launchAtLogin
 
     var body: some View {
         Form {
@@ -31,9 +32,30 @@ struct SettingsView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             }
+
+            Section("Startup") {
+                Toggle(
+                    "Launch at login",
+                    isOn: Binding(
+                        get: { launchAtLogin.isEnabled },
+                        set: { launchAtLogin.setEnabled($0) }
+                    )
+                )
+                if let error = launchAtLogin.lastError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                Text(
+                    "Clauded will start automatically when you log in. You may need to approve "
+                        + "it once in System Settings ▸ General ▸ Login Items."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 240)
+        .frame(width: 440, height: 320)
     }
 
     private var statusDescription: String {

@@ -8,6 +8,7 @@ private enum Defaults {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let registry = InstanceRegistry()
     let hookInstallState = HookInstallState()
+    let launchAtLogin = LaunchAtLoginController()
 
     private var daemon: HookDaemon?
     private var statusBarController: StatusBarController?
@@ -90,6 +91,7 @@ struct ClaudedApp: App {
         Settings {
             SettingsView()
                 .environment(appDelegate.hookInstallState)
+                .environment(appDelegate.launchAtLogin)
         }
     }
 }
