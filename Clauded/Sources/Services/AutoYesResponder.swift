@@ -25,7 +25,7 @@ final class AutoYesResponder {
 
     init(
         sender: KeystrokeSender,
-        minimumInterval: TimeInterval = 7,
+        minimumInterval: TimeInterval = 4,
         now: @escaping () -> Date = Date.init
     ) {
         self.sender = sender
