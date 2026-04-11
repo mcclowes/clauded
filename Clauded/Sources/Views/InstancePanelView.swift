@@ -4,7 +4,11 @@ import SwiftUI
 struct InstancePanelView: View {
     @Environment(InstanceRegistry.self) private var registry
     @Environment(HookInstallState.self) private var hookState
+    @Environment(KeyBindingsStore.self) private var keyBindings
     @Environment(\.openSettings) private var openSettingsAction
+
+    @State private var selectedId: String?
+    @FocusState private var panelFocused: Bool
 
     let onClose: () -> Void
 
@@ -25,6 +29,63 @@ struct InstancePanelView: View {
             footer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .focusable()
+        .focused($panelFocused)
+        .onAppear { panelFocused = true }
+        .onKeyPress(phases: .down) { press in
+            handleKeyPress(press)
+        }
+    }
+
+    private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
+        let char: Character = press.characters.first ?? press.key.character
+        guard let action = keyBindings.action(forCharacter: char, modifiers: press.modifiers) else {
+            return .ignored
+        }
+        perform(action)
+        return .handled
+    }
+
+    private func perform(_ action: KeyBindingAction) {
+        let rows = registry.sortedInstances
+        guard !rows.isEmpty else { return }
+
+        switch action {
+        case .selectNext:
+            selectedId = neighborId(in: rows, from: selectedId, offset: 1)
+        case .selectPrevious:
+            selectedId = neighborId(in: rows, from: selectedId, offset: -1)
+        case .activate:
+            guard let instance = resolvedSelection(rows) else { return }
+            onClose()
+            TerminalFocuser.focus(pid: instance.pid)
+        case .toggleAutoYes:
+            guard let instance = resolvedSelection(rows) else { return }
+            registry.setAutoYes(
+                sessionId: instance.id,
+                enabled: !instance.autoYesEnabled
+            )
+        }
+    }
+
+    private func resolvedSelection(_ rows: [ClaudeInstance]) -> ClaudeInstance? {
+        if let selectedId, let found = rows.first(where: { $0.id == selectedId }) {
+            return found
+        }
+        return rows.first
+    }
+
+    private func neighborId(
+        in rows: [ClaudeInstance],
+        from current: String?,
+        offset: Int
+    ) -> String? {
+        guard !rows.isEmpty else { return nil }
+        guard let current, let index = rows.firstIndex(where: { $0.id == current }) else {
+            return offset >= 0 ? rows.first?.id : rows.last?.id
+        }
+        let next = (index + offset + rows.count) % rows.count
+        return rows[next].id
     }
 
     private var hookWarningBanner: some View {
@@ -103,7 +164,11 @@ struct InstancePanelView: View {
                 ForEach(registry.sortedInstances) { instance in
                     InstanceRow(
                         instance: instance,
+                        isSelected: instance.id == selectedId,
                         onTap: {
+                            // Keep mouse and keyboard selection in sync so a subsequent
+                            // keypress picks up where the user clicked.
+                            selectedId = instance.id
                             // Close the popover first so macOS's activation-restoration has
                             // already flushed by the time we bring the terminal to the front;
                             // otherwise the popover close fires after our activate and reverts
@@ -112,6 +177,7 @@ struct InstancePanelView: View {
                             TerminalFocuser.focus(pid: instance.pid)
                         },
                         onToggleAutoYes: {
+                            selectedId = instance.id
                             registry.setAutoYes(
                                 sessionId: instance.id,
                                 enabled: !instance.autoYesEnabled

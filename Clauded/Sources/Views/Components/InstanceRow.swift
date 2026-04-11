@@ -2,6 +2,7 @@ import SwiftUI
 
 struct InstanceRow: View {
     let instance: ClaudeInstance
+    let isSelected: Bool
     let onTap: () -> Void
     let onToggleAutoYes: () -> Void
 
@@ -43,7 +44,7 @@ struct InstanceRow: View {
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isHovered ? Color.accentColor.opacity(0.12) : Color.clear)
+                .fill(rowBackground)
         )
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture {
@@ -66,6 +67,12 @@ struct InstanceRow: View {
         .help(instance.autoYesEnabled
             ? "Auto-yes is on for this session — Clauded will answer permission prompts automatically"
             : "Auto-yes is off — click to let Clauded answer permission prompts for this session")
+    }
+
+    private var rowBackground: Color {
+        if isSelected { return Color.accentColor.opacity(0.22) }
+        if isHovered { return Color.accentColor.opacity(0.12) }
+        return Color.clear
     }
 
     private var stateIndicator: some View {

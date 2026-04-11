@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let registry = InstanceRegistry()
     let hookInstallState = HookInstallState()
     let launchAtLogin = LaunchAtLoginController()
+    let keyBindings = KeyBindingsStore()
 
     private var daemon: HookDaemon?
     private var statusBarController: StatusBarController?
@@ -46,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         .environment(registry)
         .environment(hookInstallState)
+        .environment(keyBindings)
 
         statusBar.setup(contentView: panel)
 
@@ -97,6 +99,7 @@ struct ClaudedApp: App {
             SettingsView()
                 .environment(appDelegate.hookInstallState)
                 .environment(appDelegate.launchAtLogin)
+                .environment(appDelegate.keyBindings)
         }
     }
 }

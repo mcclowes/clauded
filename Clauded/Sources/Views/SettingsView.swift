@@ -5,6 +5,16 @@ struct SettingsView: View {
     @Environment(LaunchAtLoginController.self) private var launchAtLogin
 
     var body: some View {
+        TabView {
+            generalTab
+                .tabItem { Label("General", systemImage: "gear") }
+            ShortcutsSettingsView()
+                .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+        }
+        .frame(width: 480, height: 380)
+    }
+
+    private var generalTab: some View {
         Form {
             Section("Hook integration") {
                 HStack(alignment: .firstTextBaseline) {
@@ -55,7 +65,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 320)
     }
 
     private var statusDescription: String {
