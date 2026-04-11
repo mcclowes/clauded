@@ -5,6 +5,7 @@ Native macOS menu bar app for managing Claude Code instances running in terminal
 ## Build & test
 
 ```bash
+make setup     # One-time: enable .githooks/pre-commit (runs make lint on Swift changes)
 make generate  # XcodeGen from project.yml
 make build     # Debug build
 make run       # Build + launch

@@ -60,11 +60,11 @@ enum TerminalFocuser {
         let escapedTTY = tty
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        // `set selected of <tab> to true` both focuses the tab within its window and
-        // raises that window — we deliberately avoid `set index` / `set frontmost` on
-        // the window, which can cause Terminal.app to briefly reorder windows and
-        // lose the focus we just set. If no tab matches, raise a signal so Swift can
-        // fall back to app-level activation.
+        // `set selected of <tab> to true` focuses the tab *within* its window but
+        // does not raise that window when it's in the background — so we also set
+        // `frontmost` on the matched window. Order matters: select first (cheap,
+        // no window reorder), then raise. If no tab matches, raise a signal so
+        // Swift can fall back to app-level activation.
         let source = """
         tell application "Terminal"
             activate
@@ -72,6 +72,7 @@ enum TerminalFocuser {
                 repeat with t in tabs of w
                     if tty of t is "\(escapedTTY)" then
                         set selected of t to true
+                        set frontmost of w to true
                         return "ok"
                     end if
                 end repeat
