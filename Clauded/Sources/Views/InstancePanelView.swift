@@ -59,8 +59,12 @@ struct InstancePanelView: View {
             LazyVStack(spacing: 4) {
                 ForEach(registry.sortedInstances) { instance in
                     InstanceRow(instance: instance) {
-                        TerminalFocuser.focus(pid: instance.pid)
+                        // Close the popover first so macOS's activation-restoration has
+                        // already flushed by the time we bring the terminal to the front;
+                        // otherwise the popover close fires after our activate and reverts
+                        // focus to whichever app was frontmost before the popover opened.
                         onClose()
+                        TerminalFocuser.focus(pid: instance.pid)
                     }
                 }
             }

@@ -96,7 +96,10 @@ final class StatusBarController {
     }
 
     func close() {
-        popover.performClose(nil)
+        // `close()` is synchronous and skips the animation; `performClose` animates
+        // and defers the real close, which races with programmatic app activation
+        // after a row click.
+        popover.close()
     }
 
     private var settingsWindow: NSWindow?

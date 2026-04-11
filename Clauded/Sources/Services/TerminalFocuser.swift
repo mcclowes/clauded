@@ -32,30 +32,40 @@ enum TerminalFocuser {
             return
         }
         guard let app = NSRunningApplication(processIdentifier: terminalPid) else { return }
-        if app.bundleIdentifier == appleTerminalBundleId, let tty = controllingTTY(of: pid) {
-            focusAppleTerminalTab(tty: tty, fallback: app)
-            return
+        let tty = app.bundleIdentifier == appleTerminalBundleId ? controllingTTY(of: pid) : nil
+
+        // Defer to the next runloop tick so the caller (typically a popover row click)
+        // has finished closing its UI before we change active apps. Otherwise the
+        // in-flight popover close fires after our activate and clobbers the focus
+        // change, producing the "flicker then revert" behaviour.
+        DispatchQueue.main.async {
+            if let tty {
+                focusAppleTerminalTab(tty: tty, fallback: app)
+            } else {
+                app.activate(options: [])
+            }
         }
-        app.activate(options: [])
     }
 
     private static func focusAppleTerminalTab(tty: String, fallback: NSRunningApplication) {
         let escapedTTY = tty.replacingOccurrences(of: "\"", with: "\\\"")
+        // `set selected of <tab> to true` both focuses the tab within its window and
+        // raises that window — we deliberately avoid `set index` / `set frontmost` on
+        // the window, which can cause Terminal.app to briefly reorder windows and
+        // lose the focus we just set. If no tab matches, raise a signal so Swift can
+        // fall back to app-level activation.
         let source = """
         tell application "Terminal"
             activate
             repeat with w in windows
                 repeat with t in tabs of w
-                    try
-                        if tty of t is "\(escapedTTY)" then
-                            set selected of t to true
-                            set index of w to 1
-                            set frontmost of w to true
-                            return
-                        end if
-                    end try
+                    if tty of t is "\(escapedTTY)" then
+                        set selected of t to true
+                        return "ok"
+                    end if
                 end repeat
             end repeat
+            error "no matching tab" number 1000
         end tell
         """
         Task.detached(priority: .userInitiated) {
