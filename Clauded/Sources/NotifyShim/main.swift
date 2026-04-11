@@ -25,13 +25,16 @@ private func socketPath() -> String {
 }
 
 private func readStdin() -> Data {
+    // Read until EOF or the hard ceiling. The previous heuristic — "stop when a chunk
+    // is smaller than 4 KB" — falsely terminated on slow writers that flushed partial
+    // payloads, truncating the JSON. The only correct stop conditions are real EOF
+    // (empty chunk) or the byte ceiling.
     let handle = FileHandle.standardInput
     var collected = Data()
     while collected.count < maxStdinBytes {
         let chunk = handle.availableData
         if chunk.isEmpty { break }
         collected.append(chunk)
-        if chunk.count < 4096 { break }
     }
     return collected
 }

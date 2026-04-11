@@ -12,14 +12,9 @@ final class StatusBarController {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private let registry: InstanceRegistry
-    private var observationTask: Task<Void, Never>?
 
     init(registry: InstanceRegistry) {
         self.registry = registry
-    }
-
-    deinit {
-        observationTask?.cancel()
     }
 
     func setup(contentView: some View) {
@@ -39,19 +34,18 @@ final class StatusBarController {
         popover.animates = true
         popover.contentViewController = hosting
 
-        refreshIcon()
-        startObserving()
+        observeRegistry()
     }
 
-    private func startObserving() {
-        observationTask?.cancel()
-        // Poll the observable registry on a short interval so the icon stays in sync.
-        // Using observation tracking + animation would be nicer but requires a host
-        // view; polling once per 300ms is trivially cheap and robust for a menu bar.
-        observationTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                self?.refreshIcon()
-                try? await Task.sleep(for: .milliseconds(300))
+    /// Event-driven icon refresh. `withObservationTracking` fires `onChange` exactly
+    /// once per dependency mutation, so we re-register after each firing. Replaces a
+    /// prior 300 ms polling loop that was waking the main thread 3× a second.
+    private func observeRegistry() {
+        withObservationTracking { [weak self] in
+            self?.refreshIcon()
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.observeRegistry()
             }
         }
     }
@@ -102,23 +96,12 @@ final class StatusBarController {
         popover.close()
     }
 
-    private var settingsWindow: NSWindow?
-
-    func openSettings(contentView: some View) {
-        if let existing = settingsWindow, existing.isVisible {
-            existing.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
+    /// Route the Settings button through the standard SwiftUI `Settings` scene so there
+    /// is exactly one Settings window path. Previously we also hand-rolled an NSWindow,
+    /// which meant Cmd-, and the gear button could open two different windows.
+    func openSettings() {
         close()
-        let hosting = NSHostingController(rootView: contentView)
-        let window = NSWindow(contentViewController: hosting)
-        window.title = "Clauded Settings"
-        window.styleMask = [.titled, .closable]
-        window.center()
-        window.isReleasedWhenClosed = false
-        window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        settingsWindow = window
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 }

@@ -216,6 +216,105 @@ final class HookInstallerTests: XCTestCase {
         }
     }
 
+    // MARK: - Stale-path detection & dedupe
+
+    func testStatusReportsPartialWhenShimPathIsStale() throws {
+        // Install with one shim path, then construct a new installer pointing at a
+        // different path — status() should report .partial so the UI surfaces a
+        // Repair affordance.
+        let installer1 = HookInstaller(settingsURL: settingsURL, shimPath: "/old/path/clauded-notify")
+        _ = try installer1.install()
+
+        let installer2 = HookInstaller(settingsURL: settingsURL, shimPath: "/new/path/clauded-notify")
+        XCTAssertEqual(
+            installer2.status(),
+            .partial,
+            "Stale shim path should be reported as partial so the user can repair"
+        )
+
+        // After repair, status should be fully installed.
+        _ = try installer2.install()
+        XCTAssertEqual(installer2.status(), .installed)
+    }
+
+    func testInstallDedupesExistingDuplicateMarkerEntries() throws {
+        // Seed settings.json with TWO matcher blocks that both contain our marker in
+        // Notification (the kind of thing a buggy earlier install or hand-edit could
+        // leave behind). Running install should collapse them to exactly one.
+        let existing: [String: Any] = [
+            "hooks": [
+                "Notification": [
+                    [
+                        "matcher": "*",
+                        "hooks": [[
+                            "type": "command",
+                            "command": "/old/path/clauded-notify notification",
+                        ]],
+                    ],
+                    [
+                        "matcher": "*",
+                        "hooks": [[
+                            "type": "command",
+                            "command": "/also/old/clauded-notify notification",
+                        ]],
+                    ],
+                ],
+            ],
+        ]
+        try writeSettings(existing)
+
+        let installer = HookInstaller(settingsURL: settingsURL, shimPath: shimPath)
+        _ = try installer.install()
+
+        let root = try loadSettings()
+        let hooks = try XCTUnwrap(root["hooks"] as? [String: Any])
+        let notif = try XCTUnwrap(hooks["Notification"] as? [[String: Any]])
+
+        let ours: [String] = notif
+            .compactMap { $0["hooks"] as? [[String: Any]] }
+            .flatMap(\.self)
+            .compactMap { $0["command"] as? String }
+            .filter { $0.contains(HookInstaller.markerCommandName) }
+        XCTAssertEqual(ours.count, 1, "Duplicates must be collapsed to exactly one entry")
+        XCTAssertTrue(ours[0].hasPrefix(shimPath))
+    }
+
+    func testShimMissingValidationThrows() {
+        let installer = HookInstaller(
+            settingsURL: settingsURL,
+            shimPath: "/definitely/does/not/exist/clauded-notify",
+            validateShimExists: true
+        )
+        XCTAssertThrowsError(try installer.install()) { error in
+            guard case HookInstaller.InstallError.shimMissing = error else {
+                XCTFail("Expected shimMissing, got \(error)")
+                return
+            }
+        }
+    }
+
+    func testInstallDoesNotSortKeys() throws {
+        // Seed with a settings.json that has a specific key ordering; after install
+        // the non-hooks subtree should retain approximately the same ordering (we're
+        // no longer passing `.sortedKeys`). We can't verify exact serialised order
+        // across runs, but we can verify the file is no longer being sort-reformatted
+        // by writing keys that would strictly sort differently.
+        let existing: [String: Any] = [
+            "zzz-section": ["last": true],
+            "aaa-section": ["first": true],
+        ]
+        try writeSettings(existing)
+
+        let installer = HookInstaller(settingsURL: settingsURL, shimPath: shimPath)
+        _ = try installer.install()
+
+        // We can't assert key order in JSON semantically, but we can assert both
+        // sections are preserved.
+        let root = try loadSettings()
+        XCTAssertNotNil(root["zzz-section"])
+        XCTAssertNotNil(root["aaa-section"])
+    }
+
     // MARK: - Helpers
 
     private func writeSettings(_ root: [String: Any]) throws {

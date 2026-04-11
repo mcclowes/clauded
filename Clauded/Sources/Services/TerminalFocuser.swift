@@ -25,6 +25,12 @@ enum TerminalFocuser {
         "dev.warp.Warp-Stable",
     ]
 
+    /// Activation options for app-level focus. `.activateAllWindows` ensures the
+    /// terminal's frontmost window actually comes forward rather than just giving the
+    /// app menu-bar focus (the default behaviour of `activate(options: [])` is too
+    /// weak to be useful on macOS 14+).
+    private static let activationOptions: NSApplication.ActivationOptions = [.activateAllWindows]
+
     static func focus(pid: Int32?) {
         guard let pid else { return }
         guard let terminalPid = findAncestorTerminalPid(startingFrom: pid) else {
@@ -42,13 +48,18 @@ enum TerminalFocuser {
             if let tty {
                 focusAppleTerminalTab(tty: tty, fallback: app)
             } else {
-                app.activate(options: [])
+                app.activate(options: activationOptions)
             }
         }
     }
 
     private static func focusAppleTerminalTab(tty: String, fallback: NSRunningApplication) {
-        let escapedTTY = tty.replacingOccurrences(of: "\"", with: "\\\"")
+        // Escape both backslashes and quotes. Missing backslash escaping is a classic
+        // script-injection footgun even when the *current* input (devname output) can't
+        // contain them — belt-and-braces is cheap.
+        let escapedTTY = tty
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
         // `set selected of <tab> to true` both focuses the tab within its window and
         // raises that window — we deliberately avoid `set index` / `set frontmost` on
         // the window, which can cause Terminal.app to briefly reorder windows and
@@ -73,8 +84,19 @@ enum TerminalFocuser {
             NSAppleScript(source: source)?.executeAndReturnError(&error)
             guard let error else { return }
             let logger = Logger(subsystem: "com.mcclowes.clauded", category: "TerminalFocuser")
-            logger.error("Terminal.app tab focus AppleScript failed: \(error)")
-            await MainActor.run { fallback.activate(options: []) }
+            let code = (error["NSAppleScriptErrorNumber"] as? Int) ?? 0
+            if code == -1743 {
+                logger.error(
+                    """
+                    Terminal.app Automation permission denied. \
+                    Grant access in System Settings → Privacy & Security → Automation.
+                    """
+                )
+            } else {
+                let errorDescription = String(describing: error)
+                logger.error("Terminal.app tab focus AppleScript failed: \(errorDescription, privacy: .public)")
+            }
+            _ = await MainActor.run { fallback.activate(options: activationOptions) }
         }
     }
 

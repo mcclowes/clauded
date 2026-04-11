@@ -10,15 +10,14 @@ import os
 ///    fails we bail out immediately rather than overwriting a file we don't understand.
 /// 2. **Idempotent.** Running install twice is a no-op. We match on the marker path
 ///    `clauded-notify`, not on the full command string, so future command-string
-///    changes don't orphan old entries.
+///    changes don't orphan old entries. Duplicate marker entries are collapsed.
 /// 3. **Respect existing user hooks.** We merge into the arrays that Claude Code
 ///    expects; we never replace the whole `hooks` object.
 /// 4. **Clean uninstall.** Remove only entries whose command contains our marker.
 ///    Leave empty arrays cleaned up so the file stays tidy.
 /// 5. **Back up once.** On first install, copy the original to `settings.json.clauded.bak`.
 ///    Never overwrite the backup on subsequent installs.
-@MainActor
-final class HookInstaller {
+final class HookInstaller: Sendable {
     private static let logger = Logger(subsystem: "com.mcclowes.clauded", category: "HookInstaller")
 
     /// Substring we match on to identify entries we own. The shim binary is always
@@ -39,6 +38,7 @@ final class HookInstaller {
         case settingsFileUnparseable(underlying: Error)
         case settingsFileNotDictionary
         case writeFailed(underlying: Error)
+        case shimMissing(path: String)
 
         var errorDescription: String? {
             switch self {
@@ -48,6 +48,8 @@ final class HookInstaller {
                 "~/.claude/settings.json is not a JSON object"
             case let .writeFailed(underlying):
                 "Failed to write ~/.claude/settings.json: \(underlying.localizedDescription)"
+            case let .shimMissing(path):
+                "clauded-notify shim not found at expected path: \(path)"
             }
         }
     }
@@ -60,10 +62,12 @@ final class HookInstaller {
 
     private let settingsURL: URL
     private let shimPath: String
+    private let validateShimExists: Bool
 
-    init(settingsURL: URL? = nil, shimPath: String? = nil) {
+    init(settingsURL: URL? = nil, shimPath: String? = nil, validateShimExists: Bool = false) {
         self.settingsURL = settingsURL ?? Self.defaultSettingsURL()
         self.shimPath = shimPath ?? Self.defaultShimPath()
+        self.validateShimExists = validateShimExists
     }
 
     static func defaultSettingsURL() -> URL {
@@ -71,13 +75,14 @@ final class HookInstaller {
         return home.appendingPathComponent(".claude/settings.json")
     }
 
-    /// Path to the notify shim inside the app bundle. Resolved at runtime so tests can
-    /// inject a fixture path.
+    /// Path to the notify shim inside the app bundle. In production, this is always
+    /// inside the running app bundle's `Contents/MacOS`. In development/test environments
+    /// where the shim isn't bundled, returns a sentinel path — callers that need a real
+    /// shim should pass `validateShimExists: true` to surface a clear error.
     static func defaultShimPath() -> String {
         if let bundled = Bundle.main.url(forAuxiliaryExecutable: markerCommandName)?.path {
             return bundled
         }
-        // Fallback for dev/test environments where the tool isn't bundled yet.
         return "/usr/local/bin/\(markerCommandName)"
     }
 
@@ -85,6 +90,9 @@ final class HookInstaller {
 
     @discardableResult
     func install() throws -> [String] {
+        if validateShimExists, !FileManager.default.fileExists(atPath: shimPath) {
+            throw InstallError.shimMissing(path: shimPath)
+        }
         try ensureParentDirectoryExists()
         var root = try loadSettings()
         backupIfNeeded()
@@ -164,54 +172,93 @@ final class HookInstaller {
         else {
             return .notInstalled
         }
-        var installed = 0
+        let expectedCommand = "\(shimPath) "
+        var healthy = 0
+        var stale = 0
         for (claudeEvent, _) in Self.managedEvents {
             let array = (hooks[claudeEvent] as? [[String: Any]]) ?? []
-            if array.contains(where: { matcher in
-                guard let inner = matcher["hooks"] as? [[String: Any]] else { return false }
-                return inner.contains(where: { self.isOurs($0) })
-            }) {
-                installed += 1
+            var foundFresh = false
+            var foundStale = false
+            for matcher in array {
+                guard let inner = matcher["hooks"] as? [[String: Any]] else { continue }
+                for hook in inner where isOurs(hook) {
+                    if let command = hook["command"] as? String, command.hasPrefix(expectedCommand) {
+                        foundFresh = true
+                    } else {
+                        foundStale = true
+                    }
+                }
+            }
+            if foundFresh, !foundStale {
+                healthy += 1
+            } else if foundFresh || foundStale {
+                stale += 1
             }
         }
-        if installed == 0 { return .notInstalled }
-        if installed == Self.managedEvents.count { return .installed }
+        if healthy == 0, stale == 0 { return .notInstalled }
+        if healthy == Self.managedEvents.count { return .installed }
         return .partial
     }
 
     // MARK: - Merge helpers
 
-    /// Ensure the event array has a matcher block containing our hook entry. Returns
-    /// `true` if the array was mutated.
+    /// Ensure the event array has exactly one matcher block containing our hook entry.
+    /// - Updates existing entries if the shim path has moved.
+    /// - Collapses any duplicate marker entries into a single one.
+    /// - Appends a new matcher block if none exist.
+    /// Returns `true` if the array was mutated.
     private func ensureOurEntry(in eventArray: inout [[String: Any]], argument: String) -> Bool {
         let command = "\(shimPath) \(argument)"
+        var mutated = false
+        var keptOne = false
+        var newArray: [[String: Any]] = []
 
-        // Check every matcher block already in the array; if any contains our marker,
-        // update its command to the current path (handles app-move / reinstall) and exit.
-        for matcherIndex in eventArray.indices {
-            guard var inner = eventArray[matcherIndex]["hooks"] as? [[String: Any]] else { continue }
-            for hookIndex in inner.indices where isOurs(inner[hookIndex]) {
-                if (inner[hookIndex]["command"] as? String) == command {
-                    return false
+        for var matcher in eventArray {
+            var inner = (matcher["hooks"] as? [[String: Any]]) ?? []
+            let before = inner.count
+            if !keptOne, let firstOursIndex = inner.firstIndex(where: { isOurs($0) }) {
+                // Update the first one we find, drop the rest in this block.
+                if (inner[firstOursIndex]["command"] as? String) != command {
+                    inner[firstOursIndex]["command"] = command
+                    mutated = true
                 }
-                inner[hookIndex]["command"] = command
-                eventArray[matcherIndex]["hooks"] = inner
-                return true
+                let firstOurs = inner[firstOursIndex]
+                inner.removeAll(where: { isOurs($0) })
+                inner.insert(firstOurs, at: firstOursIndex)
+                keptOne = true
+            } else {
+                // Strip any of ours from remaining blocks — they're duplicates.
+                inner.removeAll(where: { isOurs($0) })
+            }
+            if inner.count != before {
+                mutated = true
+            }
+            if !inner.isEmpty {
+                matcher["hooks"] = inner
+                newArray.append(matcher)
+            } else if matcher["hooks"] != nil {
+                // Matcher only had our entry and we just stripped it — drop the block.
+                mutated = true
+            } else {
+                newArray.append(matcher)
             }
         }
 
-        // No existing entry — append a new matcher block that only contains our hook.
-        // Keeping it in its own block means the user can freely reorder/edit their
-        // own matchers without us stepping on them.
-        eventArray.append([
-            "matcher": "*",
-            "hooks": [[
-                "type": "command",
-                "command": command,
-                "timeout": 5,
-            ]],
-        ])
-        return true
+        if !keptOne {
+            // No existing entry — append a new matcher block that only contains our hook.
+            newArray.append([
+                "matcher": "*",
+                "hooks": [[
+                    "type": "command",
+                    "command": command,
+                    "timeout": 5,
+                ]],
+            ])
+            mutated = true
+        }
+
+        eventArray = newArray
+        return mutated
     }
 
     private func stripOurHooks(from matcher: [String: Any]) -> [String: Any]? {
@@ -238,7 +285,11 @@ final class HookInstaller {
     private func ensureParentDirectoryExists() throws {
         let parent = settingsURL.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: parent.path) {
-            try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: parent,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
         }
     }
 
@@ -267,12 +318,16 @@ final class HookInstaller {
 
     private func writeSettings(_ root: [String: Any]) throws {
         do {
+            // Note: we intentionally do NOT sort keys. Users often keep ~/.claude under
+            // version control, and `.sortedKeys` would churn the whole file on every
+            // install. Pretty-print for readability only.
             let data = try JSONSerialization.data(
                 withJSONObject: root,
-                options: [.prettyPrinted, .sortedKeys]
+                options: [.prettyPrinted]
             )
+            let tempName = "settings.clauded.tmp.\(UUID().uuidString).json"
             let tempURL = settingsURL.deletingLastPathComponent()
-                .appendingPathComponent("settings.clauded.tmp.json")
+                .appendingPathComponent(tempName)
             try data.write(to: tempURL, options: .atomic)
             _ = try FileManager.default.replaceItemAt(
                 settingsURL,
@@ -291,6 +346,10 @@ final class HookInstaller {
         guard fm.fileExists(atPath: settingsURL.path),
               !fm.fileExists(atPath: backupURL.path)
         else { return }
-        try? fm.copyItem(at: settingsURL, to: backupURL)
+        do {
+            try fm.copyItem(at: settingsURL, to: backupURL)
+        } catch {
+            Self.logger.error("Backup failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 }

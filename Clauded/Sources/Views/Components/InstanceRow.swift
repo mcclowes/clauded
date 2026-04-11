@@ -6,6 +6,14 @@ struct InstanceRow: View {
 
     @State private var isHovered = false
 
+    /// `RelativeDateTimeFormatter` is expensive to construct; share one across all rows
+    /// rather than creating a fresh instance on every render.
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 10) {
@@ -54,7 +62,6 @@ struct InstanceRow: View {
         case .working: .blue
         case .awaitingInput: .orange
         case .finished: .green
-        case .stopped: .secondary
         }
     }
 
@@ -69,13 +76,10 @@ struct InstanceRow: View {
         case .working: "Working…"
         case .awaitingInput: "Waiting for input"
         case .finished: "Finished"
-        case .stopped: "Stopped"
         }
     }
 
     private var relativeTime: String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: instance.lastActivity, relativeTo: Date())
+        Self.relativeFormatter.localizedString(for: instance.lastActivity, relativeTo: Date())
     }
 }

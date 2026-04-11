@@ -1,5 +1,9 @@
 import SwiftUI
 
+private enum Defaults {
+    static let didAttemptFirstInstall = "com.mcclowes.clauded.didAttemptFirstInstall"
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let registry = InstanceRegistry()
@@ -28,11 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let panel = InstancePanelView(
-            onOpenSettings: { [weak self, weak statusBar] in
-                guard let self, let statusBar else { return }
-                let settings = SettingsView()
-                    .environment(hookInstallState)
-                statusBar.openSettings(contentView: settings)
+            onOpenSettings: { [weak statusBar] in
+                statusBar?.openSettings()
             },
             onClose: { [weak statusBar] in
                 statusBar?.close()
@@ -44,12 +45,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // First-run: auto-install hooks so the app works immediately. If it fails
         // (permissions, unparseable file, whatever), we leave the state untouched
-        // and surface it in Settings.
-        if !UserDefaults.standard.bool(forKey: "didAttemptFirstInstall") {
-            UserDefaults.standard.set(true, forKey: "didAttemptFirstInstall")
-            if hookInstallState.status == .notInstalled {
+        // and surface it in Settings. We also auto-run on `.partial` so a stale install
+        // (e.g. the app was moved since last launch) is repaired without the user
+        // having to hunt for a Repair button.
+        if !UserDefaults.standard.bool(forKey: Defaults.didAttemptFirstInstall) {
+            UserDefaults.standard.set(true, forKey: Defaults.didAttemptFirstInstall)
+            if hookInstallState.status == .notInstalled || hookInstallState.status == .partial {
                 hookInstallState.toggleInstallation()
             }
+        } else if hookInstallState.status == .partial {
+            // Subsequent launches: opportunistically repair stale installs (e.g. shim
+            // path changed after app move).
+            hookInstallState.toggleInstallation()
         }
     }
 

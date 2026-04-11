@@ -5,7 +5,7 @@ import Foundation
 /// The source of truth is the stream of hook events fired by Claude Code itself.
 /// We never poll the process directly — states transition purely in response to
 /// events from the notify shim.
-enum InstanceState: String, Codable {
+enum InstanceState {
     /// Session has started but no prompt has been submitted yet.
     case idle
     /// A prompt was submitted and the agent is working.
@@ -14,14 +14,16 @@ enum InstanceState: String, Codable {
     case awaitingInput
     /// Agent finished its turn (Stop hook) but session is still alive.
     case finished
-    /// Session ended (SessionEnd hook).
-    case stopped
 }
 
 struct ClaudeInstance: Identifiable, Equatable {
     let id: String
     var projectDir: String
     var pid: Int32?
+    /// Wall-clock start time of the session's owning process, captured the first time we
+    /// learn its pid. Used to distinguish "still running" from "PID was recycled by another
+    /// process" in the reaper — `kill(pid, 0)` alone cannot tell those apart.
+    var processStartTime: Date?
     var state: InstanceState
     var lastActivity: Date
     var lastMessage: String?

@@ -30,4 +30,33 @@ struct HookEvent: Codable {
         case timestamp
         case message
     }
+
+    /// Produces a decoder that accepts ISO-8601 timestamps both with and without
+    /// fractional seconds. `JSONDecoder.DateDecodingStrategy.iso8601` only matches
+    /// `.withInternetDateTime`, so a naive `.iso8601` will silently reject the
+    /// `2026-04-10T12:00:00.000Z` timestamps the shim writes.
+    static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+            // Build formatters per-call: ISO8601DateFormatter isn't Sendable, and the
+            // allocation cost is dwarfed by the network/pipe latency of hook events.
+            let fractional = ISO8601DateFormatter()
+            fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = fractional.date(from: raw) {
+                return date
+            }
+            let plain = ISO8601DateFormatter()
+            plain.formatOptions = [.withInternetDateTime]
+            if let date = plain.date(from: raw) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Not a recognisable ISO-8601 date: \(raw)"
+            )
+        }
+        return decoder
+    }
 }

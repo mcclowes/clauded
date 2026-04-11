@@ -21,36 +21,60 @@ final class HookDaemon {
     private static let maxDatagramSize = 65536
 
     static var socketURL: URL {
+        supportDirectory().appendingPathComponent("daemon.sock")
+    }
+
+    static var pidFileURL: URL {
+        supportDirectory().appendingPathComponent("daemon.pid")
+    }
+
+    private static func supportDirectory() -> URL {
         let fallback = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support")
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? fallback
         let dir = appSupport.appendingPathComponent("Clauded", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("daemon.sock")
+        return dir
     }
 
     private var fileDescriptor: Int32 = -1
+    private var pidFileDescriptor: Int32 = -1
     private var source: DispatchSourceRead?
     private let registry: InstanceRegistry
     private let decoder: JSONDecoder
 
     init(registry: InstanceRegistry) {
         self.registry = registry
-        decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder = HookEvent.makeDecoder()
     }
 
     func start() {
+        // Single-instance guard. Acquire an exclusive non-blocking flock on a pidfile
+        // before touching the socket; if another Clauded is already running we bail out
+        // rather than kidnapping its socket.
+        let pidFD = open(Self.pidFileURL.path, O_RDWR | O_CREAT, 0o600)
+        guard pidFD >= 0 else {
+            Self.logger.error("Could not open pidfile: \(String(cString: strerror(errno)), privacy: .public)")
+            return
+        }
+        if flock(pidFD, LOCK_EX | LOCK_NB) != 0 {
+            Self.logger
+                .warning("Another Clauded daemon already holds the pidfile lock — this instance will be idle")
+            close(pidFD)
+            return
+        }
+        pidFileDescriptor = pidFD
+
         let socketPath = Self.socketURL.path
 
-        // Unlink any stale socket from a previous run. bind(2) will fail with EADDRINUSE
-        // otherwise, even if no process is listening.
+        // Safe to unlink now that we hold the single-instance lock: no one else owns it.
         unlink(socketPath)
 
         let fd = socket(AF_UNIX, SOCK_DGRAM, 0)
         guard fd >= 0 else {
             Self.logger.error("socket() failed: \(String(cString: strerror(errno)), privacy: .public)")
+            releasePidLock()
             return
         }
 
@@ -60,6 +84,7 @@ final class HookDaemon {
         guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
             Self.logger.error("Socket path too long: \(socketPath, privacy: .public)")
             close(fd)
+            releasePidLock()
             return
         }
         withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
@@ -79,10 +104,11 @@ final class HookDaemon {
         guard bindResult == 0 else {
             Self.logger.error("bind() failed: \(String(cString: strerror(errno)), privacy: .public)")
             close(fd)
+            releasePidLock()
             return
         }
 
-        // Permissive perms on the socket itself (user-only).
+        // Restrict the socket to the owning user only.
         chmod(socketPath, 0o600)
 
         fileDescriptor = fd
@@ -104,20 +130,47 @@ final class HookDaemon {
         source = nil
         fileDescriptor = -1
         unlink(Self.socketURL.path)
+        releasePidLock()
+    }
+
+    private func releasePidLock() {
+        if pidFileDescriptor >= 0 {
+            _ = flock(pidFileDescriptor, LOCK_UN)
+            close(pidFileDescriptor)
+            pidFileDescriptor = -1
+        }
     }
 
     private func drain() {
-        // The read source coalesces multiple datagrams — loop until recvfrom returns EAGAIN.
+        // The read source coalesces multiple datagrams — loop until recv returns EAGAIN.
         var buffer = [UInt8](repeating: 0, count: Self.maxDatagramSize)
         while true {
             let received = buffer.withUnsafeMutableBufferPointer { ptr -> Int in
                 recv(fileDescriptor, ptr.baseAddress, ptr.count, MSG_DONTWAIT)
             }
-            if received <= 0 {
+            if received > 0 {
+                let data = Data(bytes: buffer, count: received)
+                if received == Self.maxDatagramSize {
+                    // Datagram likely truncated to buffer size. Drop it and warn.
+                    Self.logger.error("Received maximum-size datagram; payload may be truncated")
+                }
+                process(datagram: data)
+                continue
+            }
+            if received == 0 {
+                // Empty datagram. Nothing to decode, keep draining.
+                continue
+            }
+            // received < 0
+            let err = errno
+            if err == EAGAIN || err == EWOULDBLOCK {
                 return
             }
-            let data = Data(bytes: buffer, count: received)
-            process(datagram: data)
+            if err == EINTR {
+                continue
+            }
+            Self.logger.error("recv() failed: \(String(cString: strerror(err)), privacy: .public)")
+            return
         }
     }
 
