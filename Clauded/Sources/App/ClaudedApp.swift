@@ -15,8 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let daemon = HookDaemon(registry: registry)
-        daemon.start()
         self.daemon = daemon
+        Task { await daemon.start() }
 
         let statusBar = StatusBarController(registry: registry)
         statusBarController = statusBar
@@ -62,7 +62,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         reaperTask?.cancel()
-        daemon?.stop()
+        // Block on stop so the socket is released before the process exits. Actor hop
+        // is synchronous enough here (just unlinks the socket / releases flock).
+        if let daemon {
+            let semaphore = DispatchSemaphore(value: 0)
+            Task {
+                await daemon.stop()
+                semaphore.signal()
+            }
+            _ = semaphore.wait(timeout: .now() + 1.0)
+        }
     }
 }
 

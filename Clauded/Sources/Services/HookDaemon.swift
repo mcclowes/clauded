@@ -9,26 +9,22 @@ import os
 /// never has to buffer, frame, or reconnect. Hook firing latency is the whole ball
 /// game here — we need to minimise it or every Claude interaction gets slower.
 ///
-/// The socket path is `~/Library/Application Support/Clauded/daemon.sock`. The same
-/// path is baked into `clauded-notify` at build time via the shared
-/// `HookDaemon.socketURL` helper.
-@MainActor
-final class HookDaemon {
+/// Socket I/O is isolated to this actor so the main thread never blocks on recv().
+/// Decoded events hop back to `@MainActor` to mutate the registry.
+///
+/// The default socket path is `~/Library/Application Support/Clauded/daemon.sock`, but
+/// tests can inject an alternate support directory via `init(supportDirectory:)` so
+/// they never touch the user's real state.
+actor HookDaemon {
     private static let logger = Logger(subsystem: "com.mcclowes.clauded", category: "HookDaemon")
 
     /// Max size of a single datagram we'll accept. JSON payloads are tiny (a few hundred bytes);
     /// 64KB leaves enormous headroom for future fields without risk of truncation.
     private static let maxDatagramSize = 65536
 
-    static var socketURL: URL {
-        supportDirectory().appendingPathComponent("daemon.sock")
-    }
-
-    static var pidFileURL: URL {
-        supportDirectory().appendingPathComponent("daemon.pid")
-    }
-
-    private static func supportDirectory() -> URL {
+    /// Default production location. Tests should construct a HookDaemon with an
+    /// injected `supportDirectory` and call `HookDaemon.socketURL(in:)` / `pidFileURL(in:)`.
+    static var defaultSupportDirectory: URL {
         let fallback = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Library/Application Support")
         let appSupport = FileManager.default
@@ -38,22 +34,47 @@ final class HookDaemon {
         return dir
     }
 
+    static var socketURL: URL {
+        socketURL(in: defaultSupportDirectory)
+    }
+
+    static var pidFileURL: URL {
+        pidFileURL(in: defaultSupportDirectory)
+    }
+
+    static func socketURL(in directory: URL) -> URL {
+        directory.appendingPathComponent("daemon.sock")
+    }
+
+    static func pidFileURL(in directory: URL) -> URL {
+        directory.appendingPathComponent("daemon.pid")
+    }
+
+    private let supportDirectory: URL
     private var fileDescriptor: Int32 = -1
     private var pidFileDescriptor: Int32 = -1
     private var source: DispatchSourceRead?
     private let registry: InstanceRegistry
     private let decoder: JSONDecoder
 
-    init(registry: InstanceRegistry) {
+    init(registry: InstanceRegistry, supportDirectory: URL = HookDaemon.defaultSupportDirectory) {
         self.registry = registry
+        self.supportDirectory = supportDirectory
         decoder = HookEvent.makeDecoder()
     }
 
+    var socketPath: String {
+        Self.socketURL(in: supportDirectory).path
+    }
+
     func start() {
+        try? FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+
         // Single-instance guard. Acquire an exclusive non-blocking flock on a pidfile
         // before touching the socket; if another Clauded is already running we bail out
         // rather than kidnapping its socket.
-        let pidFD = open(Self.pidFileURL.path, O_RDWR | O_CREAT, 0o600)
+        let pidPath = Self.pidFileURL(in: supportDirectory).path
+        let pidFD = open(pidPath, O_RDWR | O_CREAT, 0o600)
         guard pidFD >= 0 else {
             Self.logger.error("Could not open pidfile: \(String(cString: strerror(errno)), privacy: .public)")
             return
@@ -66,10 +87,10 @@ final class HookDaemon {
         }
         pidFileDescriptor = pidFD
 
-        let socketPath = Self.socketURL.path
+        let boundSocketPath = socketPath
 
         // Safe to unlink now that we hold the single-instance lock: no one else owns it.
-        unlink(socketPath)
+        unlink(boundSocketPath)
 
         let fd = socket(AF_UNIX, SOCK_DGRAM, 0)
         guard fd >= 0 else {
@@ -80,9 +101,9 @@ final class HookDaemon {
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
-        let pathBytes = socketPath.utf8CString
+        let pathBytes = boundSocketPath.utf8CString
         guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
-            Self.logger.error("Socket path too long: \(socketPath, privacy: .public)")
+            Self.logger.error("Socket path too long: \(boundSocketPath, privacy: .public)")
             close(fd)
             releasePidLock()
             return
@@ -109,12 +130,17 @@ final class HookDaemon {
         }
 
         // Restrict the socket to the owning user only.
-        chmod(socketPath, 0o600)
+        chmod(boundSocketPath, 0o600)
 
         fileDescriptor = fd
-        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
+        // Dedicated I/O queue keeps recv() off the main thread. The event handler hops
+        // into this actor's executor via `Task { await self.drain() }`, which preserves
+        // actor isolation for all state touches.
+        let ioQueue = DispatchQueue(label: "com.mcclowes.clauded.HookDaemon.io", qos: .userInitiated)
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: ioQueue)
         source.setEventHandler { [weak self] in
-            self?.drain()
+            guard let self else { return }
+            Task { await self.drain() }
         }
         source.setCancelHandler { [fd] in
             close(fd)
@@ -122,14 +148,14 @@ final class HookDaemon {
         source.resume()
         self.source = source
 
-        Self.logger.info("HookDaemon listening on \(socketPath, privacy: .public)")
+        Self.logger.info("HookDaemon listening on \(boundSocketPath, privacy: .public)")
     }
 
     func stop() {
         source?.cancel()
         source = nil
         fileDescriptor = -1
-        unlink(Self.socketURL.path)
+        unlink(socketPath)
         releasePidLock()
     }
 
@@ -141,7 +167,13 @@ final class HookDaemon {
         }
     }
 
-    private func drain() {
+    /// Exposed for tests: decode a single datagram and apply it to the registry as if it
+    /// had been received on the socket. Avoids needing a real socket in unit tests.
+    func ingest(datagram: Data) async {
+        await process(datagram: datagram)
+    }
+
+    private func drain() async {
         // The read source coalesces multiple datagrams — loop until recv returns EAGAIN.
         var buffer = [UInt8](repeating: 0, count: Self.maxDatagramSize)
         while true {
@@ -154,7 +186,7 @@ final class HookDaemon {
                     // Datagram likely truncated to buffer size. Drop it and warn.
                     Self.logger.error("Received maximum-size datagram; payload may be truncated")
                 }
-                process(datagram: data)
+                await process(datagram: data)
                 continue
             }
             if received == 0 {
@@ -174,10 +206,12 @@ final class HookDaemon {
         }
     }
 
-    private func process(datagram: Data) {
+    private func process(datagram: Data) async {
         do {
             let event = try decoder.decode(HookEvent.self, from: datagram)
-            registry.apply(event: event)
+            await MainActor.run {
+                registry.apply(event: event)
+            }
         } catch {
             let preview = String(data: datagram.prefix(256), encoding: .utf8) ?? "<binary>"
             Self.logger.error(
