@@ -2,7 +2,6 @@
 import Foundation
 import XCTest
 
-@MainActor
 final class HookInstallerTests: XCTestCase {
     private var tempDir: URL!
     private var settingsURL: URL!
