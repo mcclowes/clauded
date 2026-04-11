@@ -3,6 +3,7 @@ import SwiftUI
 
 struct InstancePanelView: View {
     @Environment(InstanceRegistry.self) private var registry
+    @Environment(HookInstallState.self) private var hookState
     @Environment(\.openSettings) private var openSettingsAction
 
     let onClose: () -> Void
@@ -10,6 +11,10 @@ struct InstancePanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if hookState.status != .installed {
+                Divider()
+                hookWarningBanner
+            }
             Divider()
             if registry.instances.isEmpty {
                 emptyState
@@ -20,6 +25,43 @@ struct InstancePanelView: View {
             footer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var hookWarningBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+                .font(.body)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Hooks not installed")
+                    .font(.callout)
+                    .fontWeight(.semibold)
+                Text(hookWarningMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Reinstall") {
+                hookState.reinstall()
+            }
+            .controlSize(.small)
+            .disabled(hookState.isWorking)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.yellow.opacity(0.12))
+    }
+
+    private var hookWarningMessage: String {
+        switch hookState.status {
+        case .notInstalled:
+            "Clauded isn't receiving session events. Reinstall to restore integration."
+        case .partial:
+            "Some hooks are missing or point at a stale path. Reinstall to repair."
+        case .installed:
+            ""
+        }
     }
 
     private var header: some View {

@@ -60,6 +60,22 @@ final class HookInstaller: Sendable {
         case partial
     }
 
+    /// Per-event breakdown of what `verify()` found. Richer than `InstallStatus` so UI
+    /// and tests can reason about *which* events drifted, not just the aggregate.
+    struct Verification: Equatable {
+        var healthyEvents: Set<String>
+        var missingEvents: Set<String>
+        var staleEvents: Set<String>
+
+        var isHealthy: Bool {
+            missingEvents.isEmpty && staleEvents.isEmpty
+        }
+
+        var needsAttention: Bool {
+            !isHealthy
+        }
+    }
+
     private let settingsURL: URL
     private let shimPath: String
     private let validateShimExists: Bool
@@ -167,16 +183,37 @@ final class HookInstaller: Sendable {
     // MARK: - Status
 
     func status() -> InstallStatus {
-        guard let root = try? loadSettings(),
-              let hooks = root["hooks"] as? [String: Any]
-        else {
-            return .notInstalled
+        let result = verify()
+        let total = Self.managedEvents.count
+        if result.healthyEvents.count == total { return .installed }
+        if result.healthyEvents.isEmpty, result.staleEvents.isEmpty { return .notInstalled }
+        return .partial
+    }
+
+    /// Re-read `~/.claude/settings.json` and report which managed events have a healthy
+    /// entry pointing at the current shim path, which are missing entirely, and which
+    /// are present but stale (wrong path — e.g. the app bundle moved since install).
+    ///
+    /// Called from the periodic health check so the UI can surface a warning when a
+    /// user (or another tool) has removed our hook entries from under us.
+    func verify() -> Verification {
+        var healthy: Set<String> = []
+        var missing: Set<String> = []
+        var stale: Set<String> = []
+
+        let hooks: [String: Any]
+        if let root = try? loadSettings(), let loaded = root["hooks"] as? [String: Any] {
+            hooks = loaded
+        } else {
+            for (event, _) in Self.managedEvents {
+                missing.insert(event)
+            }
+            return Verification(healthyEvents: healthy, missingEvents: missing, staleEvents: stale)
         }
+
         let expectedCommand = "\(shimPath) "
-        var healthy = 0
-        var stale = 0
-        for (claudeEvent, _) in Self.managedEvents {
-            let array = (hooks[claudeEvent] as? [[String: Any]]) ?? []
+        for (event, _) in Self.managedEvents {
+            let array = (hooks[event] as? [[String: Any]]) ?? []
             var foundFresh = false
             var foundStale = false
             for matcher in array {
@@ -190,14 +227,14 @@ final class HookInstaller: Sendable {
                 }
             }
             if foundFresh, !foundStale {
-                healthy += 1
-            } else if foundFresh || foundStale {
-                stale += 1
+                healthy.insert(event)
+            } else if foundStale {
+                stale.insert(event)
+            } else {
+                missing.insert(event)
             }
         }
-        if healthy == 0, stale == 0 { return .notInstalled }
-        if healthy == Self.managedEvents.count { return .installed }
-        return .partial
+        return Verification(healthyEvents: healthy, missingEvents: missing, staleEvents: stale)
     }
 
     // MARK: - Merge helpers

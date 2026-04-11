@@ -12,9 +12,11 @@ final class StatusBarController {
     private var statusItem: NSStatusItem?
     private let popover = NSPopover()
     private let registry: InstanceRegistry
+    private let hookInstallState: HookInstallState
 
-    init(registry: InstanceRegistry) {
+    init(registry: InstanceRegistry, hookInstallState: HookInstallState) {
         self.registry = registry
+        self.hookInstallState = hookInstallState
     }
 
     func setup(contentView: some View) {
@@ -54,6 +56,22 @@ final class StatusBarController {
         guard let button = statusItem?.button else { return }
         let attentionCount = registry.needsAttentionCount
         let total = registry.instances.count
+        let hookStatus = hookInstallState.status
+
+        // Priority order: hook warning > session attention > session activity > idle.
+        // A broken hook install means we're not getting events at all, so it outranks
+        // everything else — the user needs to know the app is flying blind.
+        if hookStatus != .installed {
+            let warning = NSImage(
+                systemSymbolName: "exclamationmark.triangle.fill",
+                accessibilityDescription: "Clauded — hooks not installed"
+            )
+            let config = NSImage.SymbolConfiguration(paletteColors: [.systemYellow])
+            button.image = warning?.withSymbolConfiguration(config)
+            button.image?.isTemplate = false
+            button.title = ""
+            return
+        }
 
         let symbolName = if attentionCount > 0 {
             "bell.badge.fill"
