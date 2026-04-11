@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var daemon: HookDaemon?
     private var statusBarController: StatusBarController?
     private var reaperTask: Task<Void, Never>?
+    private var autoYesResponder: AutoYesResponder?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let daemon = HookDaemon(registry: registry)
@@ -20,6 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let statusBar = StatusBarController(registry: registry)
         statusBarController = statusBar
+
+        let responder = AutoYesResponder(sender: AppleScriptKeystrokeSender())
+        autoYesResponder = responder
+        registry.onArmedAwaitingInput = { [weak responder] instance in
+            responder?.handle(instance)
+        }
 
         // Claude Code's SessionEnd hook doesn't fire when a terminal tab/window is
         // closed abruptly, so instances would otherwise linger forever. Sweep the
