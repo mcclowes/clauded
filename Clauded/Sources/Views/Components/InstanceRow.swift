@@ -16,33 +16,39 @@ struct InstanceRow: View {
     }()
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 10) {
-                stateIndicator
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(instance.projectName)
-                        .font(.system(.callout, design: .default, weight: .medium))
-                        .lineLimit(1)
-                    Text(subtitle)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                autoYesToggle
-                Text(relativeTime)
+        // Deliberately not a Button: the bolt toggle inside this row is itself a
+        // Button, and SwiftUI's hit-testing for nested Buttons on macOS is
+        // unreliable — taps on the inner control would either silently fail or
+        // double-fire the outer action, breaking the auto-yes toggle. Using a
+        // tap gesture on the row's content shape keeps the row clickable while
+        // leaving the bolt as the sole real Button.
+        HStack(spacing: 10) {
+            stateIndicator
+            VStack(alignment: .leading, spacing: 2) {
+                Text(instance.projectName)
+                    .font(.system(.callout, design: .default, weight: .medium))
+                    .lineLimit(1)
+                Text(subtitle)
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovered ? Color.accentColor.opacity(0.12) : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            Spacer()
+            autoYesToggle
+            Text(relativeTime)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isHovered ? Color.accentColor.opacity(0.12) : Color.clear)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture {
+            onTap()
+        }
         .onHover { hovering in
             isHovered = hovering
         }
