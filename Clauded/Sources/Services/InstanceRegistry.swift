@@ -23,6 +23,12 @@ final class InstanceRegistry {
 
     private(set) var instances: [ClaudeInstance] = []
 
+    /// Invoked when an `autoYesEnabled` instance receives a `Notification` event.
+    /// Wired up at app boot to drive the `AutoYesResponder`. The registry stays
+    /// ignorant of debouncing and keystroke delivery — those live downstream.
+    @ObservationIgnored
+    var onArmedAwaitingInput: ((ClaudeInstance) -> Void)?
+
     /// Sessions recently removed by the reaper. Events arriving for these ids within the
     /// grace window are dropped rather than resurrecting the row.
     @ObservationIgnored
@@ -75,6 +81,9 @@ final class InstanceRegistry {
                 updated.lastMessage = message
             }
             instances[index] = updated
+            if event.kind == .notification, updated.autoYesEnabled {
+                onArmedAwaitingInput?(updated)
+            }
             return
         }
 
@@ -97,6 +106,12 @@ final class InstanceRegistry {
 
     func remove(sessionId: String) {
         instances.removeAll { $0.id == sessionId }
+    }
+
+    /// Arms or disarms auto-yes for a single session. No-op if the session is unknown.
+    func setAutoYes(sessionId: String, enabled: Bool) {
+        guard let index = instances.firstIndex(where: { $0.id == sessionId }) else { return }
+        instances[index].autoYesEnabled = enabled
     }
 
     func clear() {
