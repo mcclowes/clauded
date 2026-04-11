@@ -53,6 +53,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.mcclowes.clauded.notify
         PRODUCT_NAME: clauded-notify
         SKIP_INSTALL: NO
+        ENABLE_HARDENED_RUNTIME: true
 
   ClaudedTests:
     type: bundle.unit-test
