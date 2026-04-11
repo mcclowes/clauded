@@ -245,6 +245,119 @@ final class InstanceRegistryTests: XCTestCase {
         XCTAssertTrue(registry.instances[0].autoYesEnabled)
     }
 
+    func testStopEventTransitionsToFinished() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .stop, id: "s1", project: "/a"))
+        XCTAssertEqual(registry.instances[0].state, .finished)
+    }
+
+    // MARK: - Capacity enforcement
+
+    func testEnforceCapacityEvictsFinishedBeforeWorkingEvenWhenNewer() {
+        // 200 working sessions filling the cap, then a single FINISHED session whose
+        // timestamp is *newer* than any working row. Adding it pushes us to 201, so the
+        // eviction must drop the finished row even though by lastActivity alone it would
+        // be the last to go.
+        let registry = InstanceRegistry()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        for index in 0..<200 {
+            registry.apply(
+                event: makeEvent(
+                    kind: .userPromptSubmit,
+                    id: "working-\(index)",
+                    project: "/p",
+                    at: base.addingTimeInterval(TimeInterval(index))
+                )
+            )
+        }
+        XCTAssertEqual(registry.instances.count, 200)
+
+        registry.apply(
+            event: makeEvent(
+                kind: .sessionStart,
+                id: "finished-newest",
+                project: "/p",
+                at: base.addingTimeInterval(10000)
+            )
+        )
+        registry.apply(
+            event: makeEvent(
+                kind: .stop,
+                id: "finished-newest",
+                project: "/p",
+                at: base.addingTimeInterval(10001)
+            )
+        )
+
+        XCTAssertEqual(registry.instances.count, 200)
+        XCTAssertNil(
+            registry.instances.first(where: { $0.id == "finished-newest" }),
+            "Finished session must be evicted ahead of working sessions"
+        )
+    }
+
+    func testEnforceCapacityWithinSameClassEvictsOldestByActivity() {
+        // All sessions are working — no evictable class to prefer — so the tiebreaker is
+        // pure lastActivity oldest-first.
+        let registry = InstanceRegistry()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        for index in 0..<200 {
+            registry.apply(
+                event: makeEvent(
+                    kind: .userPromptSubmit,
+                    id: "s-\(index)",
+                    project: "/p",
+                    at: base.addingTimeInterval(TimeInterval(index + 1))
+                )
+            )
+        }
+        // 201st session has the OLDEST timestamp — it should be the one evicted.
+        registry.apply(
+            event: makeEvent(
+                kind: .userPromptSubmit,
+                id: "ancient",
+                project: "/p",
+                at: base
+            )
+        )
+
+        XCTAssertEqual(registry.instances.count, 200)
+        XCTAssertNil(
+            registry.instances.first(where: { $0.id == "ancient" }),
+            "Oldest-by-activity working session should be evicted within the same class"
+        )
+    }
+
+    // MARK: - Recently-reaped grace window
+
+    func testReapedGraceWindowExpiresAfterTwoMinutes() {
+        // Reap a session, then advance the clock past the 120s grace window. A late
+        // event for that session id should now be allowed through and re-register the
+        // row instead of being silently dropped.
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "ghost", project: "/a", pid: 9001))
+        registry.reapDeadInstances(isAlive: { _ in false })
+        XCTAssertTrue(registry.instances.isEmpty)
+
+        // Within the grace window — must still be dropped.
+        clock = clock.addingTimeInterval(60)
+        registry.apply(event: makeEvent(kind: .notification, id: "ghost", project: "/a", pid: 9001))
+        XCTAssertTrue(registry.instances.isEmpty, "Late event within grace window must be dropped")
+
+        // Past the grace window — the recently-reaped entry should be pruned and the
+        // session is free to register again.
+        clock = clock.addingTimeInterval(121)
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "ghost", project: "/a", pid: 9002))
+        XCTAssertEqual(
+            registry.instances.map(\.id),
+            ["ghost"],
+            "After grace window expiry, the session id must be reusable"
+        )
+    }
+
     func testSessionEndDoesNotPoisonLaterFreshSessionWithSameId() {
         // Clean SessionEnd removes the row but should NOT put it in the recently-reaped
         // bucket — a subsequent SessionStart with the same id must register normally.
