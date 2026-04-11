@@ -1,9 +1,10 @@
+import AppKit
 import SwiftUI
 
 struct InstancePanelView: View {
     @Environment(InstanceRegistry.self) private var registry
+    @Environment(\.openSettings) private var openSettingsAction
 
-    let onOpenSettings: () -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -84,7 +85,13 @@ struct InstancePanelView: View {
     private var footer: some View {
         HStack {
             Button {
-                onOpenSettings()
+                // Close the popover first so the Settings window can become key.
+                // Then activate the app — accessory-policy apps don't take focus
+                // on their own, and `openSettings` opens the window behind
+                // whichever app was frontmost without an explicit activation.
+                onClose()
+                NSApp.activate(ignoringOtherApps: true)
+                openSettingsAction()
             } label: {
                 Image(systemName: "gearshape")
             }

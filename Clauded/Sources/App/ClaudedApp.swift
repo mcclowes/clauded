@@ -40,9 +40,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let panel = InstancePanelView(
-            onOpenSettings: { [weak statusBar] in
-                statusBar?.openSettings()
-            },
             onClose: { [weak statusBar] in
                 statusBar?.close()
             }

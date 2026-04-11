@@ -95,13 +95,4 @@ final class StatusBarController {
         // after a row click.
         popover.close()
     }
-
-    /// Route the Settings button through the standard SwiftUI `Settings` scene so there
-    /// is exactly one Settings window path. Previously we also hand-rolled an NSWindow,
-    /// which meant Cmd-, and the gear button could open two different windows.
-    func openSettings() {
-        close()
-        NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-    }
 }
