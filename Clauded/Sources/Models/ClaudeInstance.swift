@@ -27,6 +27,9 @@ struct ClaudeInstance: Identifiable, Equatable {
     var state: InstanceState
     var lastActivity: Date
     var lastMessage: String?
+    /// Per-session opt-in: when true, Clauded auto-responds to permission prompts on
+    /// the user's behalf. In-memory only — resets on app restart by design.
+    var autoYesEnabled: Bool = false
 
     var projectName: String {
         (projectDir as NSString).lastPathComponent

@@ -99,6 +99,12 @@ final class InstanceRegistry {
         instances.removeAll { $0.id == sessionId }
     }
 
+    /// Arms or disarms auto-yes for a single session. No-op if the session is unknown.
+    func setAutoYes(sessionId: String, enabled: Bool) {
+        guard let index = instances.firstIndex(where: { $0.id == sessionId }) else { return }
+        instances[index].autoYesEnabled = enabled
+    }
+
     func clear() {
         instances.removeAll()
         recentlyReaped.removeAll()
