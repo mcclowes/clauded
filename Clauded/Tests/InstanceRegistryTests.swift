@@ -185,6 +185,57 @@ final class InstanceRegistryTests: XCTestCase {
         XCTAssertTrue(registry.instances.isEmpty)
     }
 
+    func testArmedInstanceTriggersCallbackOnNotification() {
+        let registry = InstanceRegistry()
+        var fired: [String] = []
+        registry.onArmedAwaitingInput = { instance in fired.append(instance.id) }
+
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.setAutoYes(sessionId: "s1", enabled: true)
+        registry.apply(event: makeEvent(kind: .notification, id: "s1", project: "/a"))
+
+        XCTAssertEqual(fired, ["s1"])
+    }
+
+    func testUnarmedInstanceDoesNotTriggerCallback() {
+        let registry = InstanceRegistry()
+        var fired: [String] = []
+        registry.onArmedAwaitingInput = { instance in fired.append(instance.id) }
+
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .notification, id: "s1", project: "/a"))
+
+        XCTAssertTrue(fired.isEmpty)
+    }
+
+    func testCallbackDoesNotFireForNonNotificationEvents() {
+        let registry = InstanceRegistry()
+        var fired: [String] = []
+        registry.onArmedAwaitingInput = { instance in fired.append(instance.id) }
+
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.setAutoYes(sessionId: "s1", enabled: true)
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .stop, id: "s1", project: "/a"))
+
+        XCTAssertTrue(fired.isEmpty)
+    }
+
+    func testCallbackFiresEveryTimeNotificationArrives() {
+        // Two notifications in a row (e.g. user dismissed then a new prompt comes in)
+        // should both fire — debouncing is the responder's job, not the registry's.
+        let registry = InstanceRegistry()
+        var fired: [String] = []
+        registry.onArmedAwaitingInput = { instance in fired.append(instance.id) }
+
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.setAutoYes(sessionId: "s1", enabled: true)
+        registry.apply(event: makeEvent(kind: .notification, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .notification, id: "s1", project: "/a"))
+
+        XCTAssertEqual(fired, ["s1", "s1"])
+    }
+
     func testAutoYesSurvivesSubsequentEventsForSameSession() {
         let registry = InstanceRegistry()
         registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))

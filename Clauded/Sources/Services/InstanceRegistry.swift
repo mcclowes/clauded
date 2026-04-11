@@ -23,6 +23,12 @@ final class InstanceRegistry {
 
     private(set) var instances: [ClaudeInstance] = []
 
+    /// Invoked when an `autoYesEnabled` instance receives a `Notification` event.
+    /// Wired up at app boot to drive the `AutoYesResponder`. The registry stays
+    /// ignorant of debouncing and keystroke delivery — those live downstream.
+    @ObservationIgnored
+    var onArmedAwaitingInput: ((ClaudeInstance) -> Void)?
+
     /// Sessions recently removed by the reaper. Events arriving for these ids within the
     /// grace window are dropped rather than resurrecting the row.
     @ObservationIgnored
@@ -75,6 +81,9 @@ final class InstanceRegistry {
                 updated.lastMessage = message
             }
             instances[index] = updated
+            if event.kind == .notification, updated.autoYesEnabled {
+                onArmedAwaitingInput?(updated)
+            }
             return
         }
 
