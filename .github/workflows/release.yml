@@ -69,22 +69,29 @@ jobs:
           # Create zip for notarization
           ditto -c -k --keepParent "$APP_PATH" "$BUILD_DIR/Clauded.zip"
 
-          # Submit for notarization
+          # Submit for notarization. Capture output + exit status without
+          # masking failures; --wait returns non-zero on any non-Accepted status.
+          set +e
           SUBMISSION_OUTPUT=$(xcrun notarytool submit "$BUILD_DIR/Clauded.zip" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_ID_PASSWORD" \
             --team-id "$TEAM_ID" \
-            --wait 2>&1) || true
+            --wait 2>&1)
+          SUBMISSION_STATUS=$?
+          set -e
           echo "$SUBMISSION_OUTPUT"
 
-          SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | grep -m1 'id:' | awk '{print $NF}')
+          SUBMISSION_ID=$(echo "$SUBMISSION_OUTPUT" | grep -m1 '  id:' | awk '{print $NF}')
 
-          if echo "$SUBMISSION_OUTPUT" | grep -q "status: Invalid"; then
-            echo "Notarization failed — fetching log:"
-            xcrun notarytool log "$SUBMISSION_ID" \
-              --apple-id "$APPLE_ID" \
-              --password "$APPLE_ID_PASSWORD" \
-              --team-id "$TEAM_ID"
+          if [ "$SUBMISSION_STATUS" -ne 0 ] || ! echo "$SUBMISSION_OUTPUT" | grep -q "status: Accepted"; then
+            echo "Notarization did not reach Accepted state (exit=$SUBMISSION_STATUS)."
+            if [ -n "$SUBMISSION_ID" ]; then
+              echo "Fetching notarization log for $SUBMISSION_ID:"
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$APPLE_ID" \
+                --password "$APPLE_ID_PASSWORD" \
+                --team-id "$TEAM_ID" || true
+            fi
             exit 1
           fi
 
@@ -113,7 +120,7 @@ jobs:
 
             **Install via Homebrew:**
             ```
-            brew install mcclowes/clauded/clauded
+            brew install --cask mcclowes/clauded/clauded
             ```
 
             **SHA256:** `${{ steps.artifact.outputs.sha256 }}`
@@ -124,14 +131,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
+          # Strip the leading "v" from the tag for the cask version field.
+          CASK_VERSION="${GITHUB_REF_NAME#v}"
           CASK_CONTENT=$(cat <<CASKEOF
           cask "clauded" do
-            version "${{ github.ref_name }}"
+            version "${CASK_VERSION}"
             sha256 "${{ steps.artifact.outputs.sha256 }}"
-            url "https://github.com/mcclowes/clauded/releases/download/${{ github.ref_name }}/Clauded.zip"
+
+            url "https://github.com/mcclowes/clauded/releases/download/v#{version}/Clauded.zip",
+                verified: "github.com/mcclowes/clauded/"
             name "Clauded"
-            desc "Native macOS menu bar app for managing Claude Code instances"
+            desc "Menu bar app for managing Claude Code instances"
             homepage "https://github.com/mcclowes/clauded"
+
+            livecheck do
+              url :url
+              strategy :github_latest
+            end
 
             depends_on macos: ">= :sequoia"
 

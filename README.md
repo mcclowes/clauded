@@ -11,7 +11,7 @@ Clauded lives in your menu bar and gives you a live view of every Claude Code se
 **Homebrew** (recommended):
 
 ```bash
-brew install mcclowes/clauded/clauded
+brew install --cask mcclowes/clauded/clauded
 ```
 
 **Manual download:** Grab the latest `Clauded.zip` from [GitHub Releases](https://github.com/mcclowes/clauded/releases), unzip, and drag Clauded to your Applications folder.
@@ -55,6 +55,28 @@ make test      # Run tests
 ```
 
 Requires **Xcode 16+** and **Swift 6**. See [CLAUDE.md](./CLAUDE.md) for project structure and architecture details.
+
+## Releasing
+
+Releases are cut via the **Bump Version & Release** workflow in GitHub Actions:
+
+1. Run [`bump-version.yml`](./.github/workflows/bump-version.yml) manually, choosing `patch` / `minor` / `major`. It opens a PR that edits `MARKETING_VERSION` in `Clauded/project.yml`.
+2. Merge the PR. [`tag-release.yml`](./.github/workflows/tag-release.yml) pushes the `vX.Y.Z` tag.
+3. The tag triggers [`release.yml`](./.github/workflows/release.yml), which builds + signs + notarizes `Clauded.app`, attaches `Clauded.zip` to a GitHub Release, and pushes the updated cask to [`mcclowes/homebrew-clauded`](https://github.com/mcclowes/homebrew-clauded).
+
+### Required GitHub Actions secrets
+
+| Secret | Purpose |
+| --- | --- |
+| `DEVELOPER_ID_CERTIFICATE_BASE64` | Base64-encoded `.p12` Developer ID Application certificate |
+| `DEVELOPER_ID_CERTIFICATE_PASSWORD` | Password for the `.p12` |
+| `APPLE_ID` | Apple ID email used for notarization |
+| `APPLE_ID_PASSWORD` | App-specific password for `notarytool` |
+| `APPLE_TEAM_ID` | 10-character Apple Developer team ID |
+| `HOMEBREW_TAP_TOKEN` | PAT with `contents:write` on `mcclowes/homebrew-clauded` |
+| `RELEASE_TOKEN` | PAT with `contents:write` on this repo (used by version bump / tag workflows) |
+
+The [local cask template](./homebrew/clauded.rb) is the source of truth for what each release writes into the tap; update it alongside any changes to the release workflow's heredoc.
 
 ## License
 
