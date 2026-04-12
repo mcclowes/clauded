@@ -42,6 +42,7 @@ final class AppleScriptKeystrokeSender: KeystrokeSender {
         let source = """
         tell application "System Events"
             keystroke "1"
+            delay 0.15
             keystroke return
         end tell
         """
