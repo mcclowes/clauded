@@ -138,8 +138,24 @@ struct InstancePanelView: View {
                 .font(.caption)
                 .foregroundStyle(.orange)
             }
+            turboToggle
         }
         .padding(12)
+    }
+
+    private var turboToggle: some View {
+        Button {
+            registry.setTurbo(enabled: !registry.turboEnabled)
+        } label: {
+            Label("Turbo", systemImage: registry.turboEnabled ? "bolt.fill" : "bolt.slash")
+                .labelStyle(.titleAndIcon)
+                .font(.caption)
+                .foregroundStyle(registry.turboEnabled ? Color.yellow : Color.secondary)
+        }
+        .buttonStyle(.borderless)
+        .help(registry.turboEnabled
+            ? "Turbo on — auto-yes armed for every current and new session"
+            : "Turbo off — click to auto-yes every current and new session")
     }
 
     private var emptyState: some View {

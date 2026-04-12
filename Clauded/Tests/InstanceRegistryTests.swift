@@ -236,6 +236,36 @@ final class InstanceRegistryTests: XCTestCase {
         XCTAssertEqual(fired, ["s1", "s1"])
     }
 
+    func testSetTurboArmsAllCurrentInstances() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s2", project: "/b"))
+
+        registry.setTurbo(enabled: true)
+
+        XCTAssertTrue(registry.turboEnabled)
+        XCTAssertTrue(registry.instances.allSatisfy(\.autoYesEnabled))
+    }
+
+    func testTurboArmsSessionsRegisteredAfterItWasEnabled() {
+        let registry = InstanceRegistry()
+        registry.setTurbo(enabled: true)
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        XCTAssertTrue(registry.instances[0].autoYesEnabled)
+    }
+
+    func testDisablingTurboClearsAutoYesOnAllInstances() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s2", project: "/b"))
+        registry.setTurbo(enabled: true)
+
+        registry.setTurbo(enabled: false)
+
+        XCTAssertFalse(registry.turboEnabled)
+        XCTAssertTrue(registry.instances.allSatisfy { instance in !instance.autoYesEnabled })
+    }
+
     func testAutoYesSurvivesSubsequentEventsForSameSession() {
         let registry = InstanceRegistry()
         registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))

@@ -23,6 +23,11 @@ final class InstanceRegistry {
 
     private(set) var instances: [ClaudeInstance] = []
 
+    /// Global "turbo" switch. When on, every current session is armed with auto-yes and
+    /// every newly registered session starts armed. In-memory only — resets on app
+    /// restart, matching the per-session `autoYesEnabled` semantics.
+    private(set) var turboEnabled: Bool = false
+
     /// Invoked when an `autoYesEnabled` instance receives a `Notification` event.
     /// Wired up at app boot to drive the `AutoYesResponder`. The registry stays
     /// ignorant of debouncing and keystroke delivery — those live downstream.
@@ -105,7 +110,8 @@ final class InstanceRegistry {
                 processStartTime: startTime,
                 state: newState,
                 lastActivity: event.timestamp,
-                lastMessage: event.message
+                lastMessage: event.message,
+                autoYesEnabled: turboEnabled
             )
         )
         Self.logger.debug("Session registered: \(event.sessionId, privacy: .public)")
@@ -120,6 +126,16 @@ final class InstanceRegistry {
     func setAutoYes(sessionId: String, enabled: Bool) {
         guard let index = instances.firstIndex(where: { $0.id == sessionId }) else { return }
         instances[index].autoYesEnabled = enabled
+    }
+
+    /// Flips the global turbo switch. Arming applies auto-yes to every known session and
+    /// seeds future sessions as armed. Disarming clears auto-yes on every session so the
+    /// toggle is symmetric — a user flipping it off should not leave armed sessions behind.
+    func setTurbo(enabled: Bool) {
+        turboEnabled = enabled
+        for index in instances.indices {
+            instances[index].autoYesEnabled = enabled
+        }
     }
 
     func clear() {
