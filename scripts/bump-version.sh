@@ -32,7 +32,8 @@ TAG="v${NEW_VERSION}"
 
 echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION ($BUMP_TYPE)"
 
-sed -i "s/MARKETING_VERSION: \"${CURRENT_VERSION}\"/MARKETING_VERSION: \"${NEW_VERSION}\"/" "$PROJECT_YML"
+sed -i.bak "s/MARKETING_VERSION: \"${CURRENT_VERSION}\"/MARKETING_VERSION: \"${NEW_VERSION}\"/" "$PROJECT_YML"
+rm "${PROJECT_YML}.bak"
 
 git add "$PROJECT_YML"
 git commit -m "Bump version to ${NEW_VERSION}"
