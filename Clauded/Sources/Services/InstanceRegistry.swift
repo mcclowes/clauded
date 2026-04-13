@@ -52,6 +52,15 @@ final class InstanceRegistry {
         instances.count(where: { $0.needsAttention })
     }
 
+    /// Oldest session currently in `.awaitingInput`, or `nil` if none are waiting.
+    /// Drives the global "jump to next attention" hotkey — by picking the oldest
+    /// we answer the user's implicit "what's been waiting longest" question.
+    var oldestAwaitingAttention: ClaudeInstance? {
+        instances
+            .filter(\.needsAttention)
+            .min(by: { $0.lastActivity < $1.lastActivity })
+    }
+
     var sortedInstances: [ClaudeInstance] {
         instances.sorted { lhs, rhs in
             if lhs.needsAttention != rhs.needsAttention {

@@ -2,11 +2,39 @@ import SwiftUI
 
 struct ShortcutsSettingsView: View {
     @Environment(KeyBindingsStore.self) private var store
+    @Environment(GlobalHotkeyStore.self) private var globalStore
     @State private var capturingAction: KeyBindingAction?
+    @State private var capturingGlobal: Bool = false
     @FocusState private var captureFocused: Bool
 
     var body: some View {
         Form {
+            Section("Global shortcut") {
+                HStack {
+                    Text("Jump to next attention-needing session")
+                        .font(.callout)
+                    Spacer()
+                    globalBindingButton
+                }
+                if globalStore.jumpToAttention != nil {
+                    HStack {
+                        Spacer()
+                        Button("Clear") {
+                            globalStore.setJumpToAttention(nil)
+                            capturingGlobal = false
+                        }
+                        .controlSize(.small)
+                    }
+                }
+                Text(
+                    "Fires system-wide. Brings the oldest session waiting on input to the "
+                        + "front; falls back to opening the Clauded panel. Requires "
+                        + "Accessibility permission."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+
             Section("Panel shortcuts") {
                 ForEach(KeyBindingAction.allCases, id: \.self) { action in
                     HStack {
@@ -29,17 +57,18 @@ struct ShortcutsSettingsView: View {
                     Spacer()
                     Button("Reset to defaults") {
                         store.resetToDefaults()
+                        globalStore.resetToDefault()
                         capturingAction = nil
+                        capturingGlobal = false
                     }
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(width: 480, height: 340)
+        .frame(width: 480, height: 420)
         .focusable()
         .focused($captureFocused)
         .onKeyPress(phases: .down) { press in
-            guard let action = capturingAction else { return .ignored }
             // Prefer `.characters` so shifted letters land as uppercase; fall back
             // to `.key.character` for named keys (arrows, return) whose `.characters`
             // is empty.
@@ -47,13 +76,47 @@ struct ShortcutsSettingsView: View {
             // Escape cancels capture.
             if char == Character("\u{1B}") {
                 capturingAction = nil
+                capturingGlobal = false
                 return .handled
             }
+            if capturingGlobal {
+                globalStore.setJumpToAttention(
+                    KeyBinding(character: char, modifiers: press.modifiers)
+                )
+                capturingGlobal = false
+                return .handled
+            }
+            guard let action = capturingAction else { return .ignored }
             let newBinding = KeyBinding(character: char, modifiers: press.modifiers)
             store.setBinding(newBinding, for: action)
             capturingAction = nil
             return .handled
         }
+    }
+
+    private var globalBindingButton: some View {
+        let label = capturingGlobal
+            ? "Press any key…"
+            : describe(globalStore.jumpToAttention)
+        return Button {
+            capturingGlobal = true
+            capturingAction = nil
+            captureFocused = true
+        } label: {
+            Text(label)
+                .font(.system(.callout, design: .monospaced))
+                .frame(minWidth: 120)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(
+                            capturingGlobal ? Color.accentColor : Color.secondary.opacity(0.4),
+                            lineWidth: 1
+                        )
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func bindingButton(for action: KeyBindingAction) -> some View {
