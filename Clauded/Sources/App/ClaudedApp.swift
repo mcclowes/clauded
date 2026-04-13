@@ -8,6 +8,7 @@ private enum Defaults {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let registry = InstanceRegistry()
     let hookInstallState = HookInstallState()
+    let accessibilityState = AccessibilityPermissionState()
     let launchAtLogin = LaunchAtLoginController()
     let keyBindings = KeyBindingsStore()
 
@@ -24,7 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let statusBar = StatusBarController(registry: registry, hookInstallState: hookInstallState)
         statusBarController = statusBar
 
-        let responder = AutoYesResponder(sender: AppleScriptKeystrokeSender())
+        let responder = AutoYesResponder(
+            sender: AppleScriptKeystrokeSender(permissionState: accessibilityState)
+        )
         autoYesResponder = responder
         registry.onArmedAwaitingInput = { [weak responder] instance in
             responder?.handle(instance)
@@ -47,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         .environment(registry)
         .environment(hookInstallState)
+        .environment(accessibilityState)
         .environment(keyBindings)
 
         statusBar.setup(contentView: panel)

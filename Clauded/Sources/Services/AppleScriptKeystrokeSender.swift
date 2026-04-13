@@ -25,6 +25,12 @@ final class AppleScriptKeystrokeSender: KeystrokeSender {
     /// happened to be frontmost).
     private static let focusSettleDelay: TimeInterval = 0.15
 
+    private let permissionState: AccessibilityPermissionState?
+
+    init(permissionState: AccessibilityPermissionState? = nil) {
+        self.permissionState = permissionState
+    }
+
     func sendAutoYes(to instance: ClaudeInstance) {
         guard let pid = instance.pid else {
             Self.logger.info("Skipping auto-yes for session with no pid: \(instance.id, privacy: .public)")
@@ -33,12 +39,16 @@ final class AppleScriptKeystrokeSender: KeystrokeSender {
         TerminalFocuser.focus(pid: pid)
         // Schedule the keystroke onto the next runloop tick + a small settle delay
         // so the focus change has time to land before we type into it.
+        let permissionState = permissionState
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusSettleDelay) {
-            Self.runKeystrokeScript(sessionId: instance.id)
+            Self.runKeystrokeScript(sessionId: instance.id, permissionState: permissionState)
         }
     }
 
-    private static func runKeystrokeScript(sessionId: String) {
+    private static func runKeystrokeScript(
+        sessionId: String,
+        permissionState: AccessibilityPermissionState?
+    ) {
         let source = """
         tell application "System Events"
             keystroke "1"
@@ -54,7 +64,10 @@ final class AppleScriptKeystrokeSender: KeystrokeSender {
             // matches the pattern used in TerminalFocuser.
             let logger = Logger(subsystem: "com.mcclowes.clauded", category: "AppleScriptKeystrokeSender")
             let code = (error["NSAppleScriptErrorNumber"] as? Int) ?? 0
-            if code == -1743 {
+            // -1743: TCC denial before AppleScript even runs.
+            //  1002: System Events ran but Clauded lacks Accessibility ("not allowed to send keystrokes").
+            // Both mean the same user-facing fix, so treat them identically.
+            if code == -1743 || code == 1002 {
                 logger.error(
                     """
                     Auto-yes failed: Accessibility permission denied. \
@@ -62,6 +75,9 @@ final class AppleScriptKeystrokeSender: KeystrokeSender {
                     for session \(sessionId, privacy: .public).
                     """
                 )
+                if let permissionState {
+                    Task { @MainActor in permissionState.markDenied() }
+                }
             } else {
                 let errorDescription = String(describing: error)
                 logger.error(

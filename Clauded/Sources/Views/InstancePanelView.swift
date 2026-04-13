@@ -4,6 +4,7 @@ import SwiftUI
 struct InstancePanelView: View {
     @Environment(InstanceRegistry.self) private var registry
     @Environment(HookInstallState.self) private var hookState
+    @Environment(AccessibilityPermissionState.self) private var accessibilityState
     @Environment(KeyBindingsStore.self) private var keyBindings
     @Environment(\.openSettings) private var openSettingsAction
 
@@ -19,6 +20,10 @@ struct InstancePanelView: View {
                 Divider()
                 hookWarningBanner
             }
+            if !accessibilityState.isTrusted {
+                Divider()
+                accessibilityWarningBanner
+            }
             Divider()
             if registry.instances.isEmpty {
                 emptyState
@@ -31,7 +36,12 @@ struct InstancePanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .focusable()
         .focused($panelFocused)
-        .onAppear { panelFocused = true }
+        .onAppear {
+            panelFocused = true
+            // Re-poll each time the popover opens so the banner disappears as soon
+            // as the user grants access in System Settings — no restart needed.
+            accessibilityState.refresh()
+        }
         .onKeyPress(phases: .down) { press in
             handleKeyPress(press)
         }
@@ -108,6 +118,34 @@ struct InstancePanelView: View {
             }
             .controlSize(.small)
             .disabled(hookState.isWorking)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.yellow.opacity(0.12))
+    }
+
+    private var accessibilityWarningBanner: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+                .font(.body)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Accessibility permission needed")
+                    .font(.callout)
+                    .fontWeight(.semibold)
+                Text(
+                    "Auto-yes can't send keystrokes until Clauded is granted Accessibility " +
+                        "access in System Settings → Privacy & Security → Accessibility."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Open settings") {
+                accessibilityState.openSystemSettings()
+            }
+            .controlSize(.small)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
