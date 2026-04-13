@@ -14,7 +14,7 @@ final class HookInstallState {
     /// our hooks — a periodic re-check is the cheapest way to notice.
     nonisolated static let healthCheckInterval: Duration = .seconds(600)
 
-    private let installer: HookInstaller
+    private let installer: any HookInstalling
 
     private(set) var status: HookInstaller.InstallStatus
     private(set) var verification: HookInstaller.Verification
@@ -23,7 +23,7 @@ final class HookInstallState {
 
     private var healthCheckTask: Task<Void, Never>?
 
-    init(installer: HookInstaller = HookInstaller()) {
+    init(installer: any HookInstalling = HookInstaller()) {
         self.installer = installer
         verification = installer.verify()
         status = installer.status()
