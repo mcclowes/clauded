@@ -19,11 +19,6 @@ import Foundation
 
 private let maxStdinBytes = 64 * 1024
 
-private func socketPath() -> String {
-    let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
-    return "\(home)/Library/Application Support/Clauded/daemon.sock"
-}
-
 private func readStdin() -> Data {
     // Read until EOF or the hard ceiling. The previous heuristic — "stop when a chunk
     // is smaller than 4 KB" — falsely terminated on slow writers that flushed partial
@@ -39,28 +34,6 @@ private func readStdin() -> Data {
     return collected
 }
 
-private func extractSessionId(from stdinJSON: [String: Any]) -> String {
-    if let id = stdinJSON["session_id"] as? String { return id }
-    if let id = stdinJSON["sessionId"] as? String { return id }
-    // Fall back to pid+projectDir so we still have a stable key.
-    let pid = getppid()
-    let project = ProcessInfo.processInfo.environment["CLAUDE_PROJECT_DIR"] ?? ""
-    return "\(project):\(pid)"
-}
-
-private func extractMessage(from stdinJSON: [String: Any], kind: String) -> String? {
-    if let msg = stdinJSON["message"] as? String { return msg }
-    if let prompt = stdinJSON["prompt"] as? String { return String(prompt.prefix(200)) }
-    if kind == "notification", let reason = stdinJSON["reason"] as? String { return reason }
-    return nil
-}
-
-private func isoNow() -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.string(from: Date())
-}
-
 private func sendDatagram(_ payload: Data) {
     let fd = socket(AF_UNIX, SOCK_DGRAM, 0)
     guard fd >= 0 else { return }
@@ -72,7 +45,7 @@ private func sendDatagram(_ payload: Data) {
 
     var addr = sockaddr_un()
     addr.sun_family = sa_family_t(AF_UNIX)
-    let path = socketPath()
+    let path = NotifyShimCore.socketPath()
     let pathBytes = path.utf8CString
     guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else { return }
     withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
@@ -113,7 +86,7 @@ let kind = args[1]
 let stdinData = readStdin()
 let stdinJSON = (try? JSONSerialization.jsonObject(with: stdinData)) as? [String: Any] ?? [:]
 
-let sessionId = extractSessionId(from: stdinJSON)
+let sessionId = NotifyShimCore.extractSessionId(from: stdinJSON)
 let projectDir = (stdinJSON["cwd"] as? String)
     ?? ProcessInfo.processInfo.environment["CLAUDE_PROJECT_DIR"]
     ?? ""
@@ -124,9 +97,9 @@ var event: [String: Any] = [
     "session_id": sessionId,
     "project_dir": projectDir,
     "pid": pid,
-    "timestamp": isoNow(),
+    "timestamp": NotifyShimCore.isoNow(),
 ]
-if let message = extractMessage(from: stdinJSON, kind: kind) {
+if let message = NotifyShimCore.extractMessage(from: stdinJSON, kind: kind) {
     event["message"] = message
 }
 

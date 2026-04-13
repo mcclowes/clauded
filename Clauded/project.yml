@@ -48,6 +48,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources/NotifyShim
+      - path: Sources/NotifyShimCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mcclowes.clauded.notify
