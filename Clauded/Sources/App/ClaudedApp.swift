@@ -11,11 +11,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let accessibilityState = AccessibilityPermissionState()
     let launchAtLogin = LaunchAtLoginController()
     let keyBindings = KeyBindingsStore()
+    let globalHotkeys = GlobalHotkeyStore()
 
     private var daemon: HookDaemon?
     private var statusBarController: StatusBarController?
     private var reaperTask: Task<Void, Never>?
     private var autoYesResponder: AutoYesResponder?
+    private var globalHotkeyController: GlobalHotkeyController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let daemon = HookDaemon(registry: registry)
@@ -55,6 +57,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         statusBar.setup(contentView: panel)
 
+        let hotkey = GlobalHotkeyController()
+        hotkey.onTrigger = { [weak self] in self?.handleJumpToAttention() }
+        hotkey.update(binding: globalHotkeys.jumpToAttention)
+        globalHotkeyController = hotkey
+        observeGlobalHotkeyBinding()
+
         // First-run: auto-install hooks so the app works immediately. If it fails
         // (permissions, unparseable file, whatever), we leave the state untouched
         // and surface it in Settings. We also auto-run on `.partial` so a stale install
@@ -77,6 +85,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // a silent rewrite of settings.json behind the user's back is worse than a
         // visible warning.
         hookInstallState.startHealthCheck()
+    }
+
+    private func observeGlobalHotkeyBinding() {
+        withObservationTracking { [weak self] in
+            _ = self?.globalHotkeys.jumpToAttention
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                globalHotkeyController?.update(binding: globalHotkeys.jumpToAttention)
+                observeGlobalHotkeyBinding()
+            }
+        }
+    }
+
+    private func handleJumpToAttention() {
+        statusBarController?.close()
+        if let instance = registry.oldestAwaitingAttention {
+            TerminalFocuser.focus(pid: instance.pid)
+        } else {
+            statusBarController?.show()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -104,6 +133,7 @@ struct ClaudedApp: App {
                 .environment(appDelegate.hookInstallState)
                 .environment(appDelegate.launchAtLogin)
                 .environment(appDelegate.keyBindings)
+                .environment(appDelegate.globalHotkeys)
         }
     }
 }

@@ -43,6 +43,56 @@ final class InstanceRegistryTests: XCTestCase {
         XCTAssertEqual(registry.needsAttentionCount, 2)
     }
 
+    func testOldestAwaitingAttentionReturnsNilWhenNoneWaiting() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a"))
+        XCTAssertNil(registry.oldestAwaitingAttention)
+    }
+
+    func testOldestAwaitingAttentionPicksEarliestLastActivity() {
+        let registry = InstanceRegistry()
+        let now = Date()
+        // Three awaiting-input sessions; middle one is the oldest by lastActivity.
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "a", project: "/a", at: now))
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "b", project: "/b", at: now))
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "c", project: "/c", at: now))
+        registry.apply(
+            event: makeEvent(kind: .notification, id: "a", project: "/a", at: now.addingTimeInterval(30))
+        )
+        registry.apply(
+            event: makeEvent(kind: .notification, id: "b", project: "/b", at: now.addingTimeInterval(10))
+        )
+        registry.apply(
+            event: makeEvent(kind: .notification, id: "c", project: "/c", at: now.addingTimeInterval(20))
+        )
+        XCTAssertEqual(registry.oldestAwaitingAttention?.id, "b")
+    }
+
+    func testOldestAwaitingAttentionIgnoresNonWaitingSessions() {
+        let registry = InstanceRegistry()
+        let now = Date()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "working", project: "/a", at: now))
+        registry.apply(
+            event: makeEvent(
+                kind: .userPromptSubmit,
+                id: "working",
+                project: "/a",
+                at: now.addingTimeInterval(1)
+            )
+        )
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "waiting", project: "/b", at: now))
+        registry.apply(
+            event: makeEvent(
+                kind: .notification,
+                id: "waiting",
+                project: "/b",
+                at: now.addingTimeInterval(5)
+            )
+        )
+        XCTAssertEqual(registry.oldestAwaitingAttention?.id, "waiting")
+    }
+
     func testSortedInstancesPutsAttentionFirst() {
         let registry = InstanceRegistry()
         let now = Date()
