@@ -11,6 +11,7 @@ settings:
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     SWIFT_STRICT_CONCURRENCY: complete
+    CLANG_ENABLE_CODE_COVERAGE: NO
 
 targets:
   Clauded:
