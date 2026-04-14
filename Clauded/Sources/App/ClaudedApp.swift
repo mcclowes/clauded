@@ -12,12 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let launchAtLogin = LaunchAtLoginController()
     let keyBindings = KeyBindingsStore()
     let globalHotkeys = GlobalHotkeyStore()
+    let quickReplyStore = QuickReplyStore()
 
     private var daemon: HookDaemon?
     private var statusBarController: StatusBarController?
     private var reaperTask: Task<Void, Never>?
     private var autoYesResponder: AutoYesResponder?
     private var globalHotkeyController: GlobalHotkeyController?
+    private var quickReplyController: QuickReplyController?
     private var sessionNotifier: SessionNotifier?
     private var notificationPoster: UserNotificationPoster?
 
@@ -29,10 +31,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let statusBar = StatusBarController(registry: registry, hookInstallState: hookInstallState)
         statusBarController = statusBar
 
-        let responder = AutoYesResponder(
-            sender: AppleScriptKeystrokeSender(permissionState: accessibilityState)
-        )
+        let keystrokeSender = AppleScriptKeystrokeSender(permissionState: accessibilityState)
+        let responder = AutoYesResponder(sender: keystrokeSender)
         autoYesResponder = responder
+        let quickReply = QuickReplyController(store: quickReplyStore, sender: keystrokeSender)
+        quickReplyController = quickReply
         registry.onArmedAwaitingInput = { [weak responder] instance in
             responder?.handle(instance)
         }
@@ -65,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .environment(hookInstallState)
         .environment(accessibilityState)
         .environment(keyBindings)
+        .environment(quickReply)
 
         statusBar.setup(contentView: panel)
 
@@ -145,6 +149,7 @@ struct ClaudedApp: App {
                 .environment(appDelegate.launchAtLogin)
                 .environment(appDelegate.keyBindings)
                 .environment(appDelegate.globalHotkeys)
+                .environment(appDelegate.quickReplyStore)
         }
     }
 }

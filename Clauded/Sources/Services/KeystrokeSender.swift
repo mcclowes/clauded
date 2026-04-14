@@ -8,4 +8,7 @@ import Foundation
 @MainActor
 protocol KeystrokeSender {
     func sendAutoYes(to instance: ClaudeInstance)
+    /// Types `text` followed by Return into the terminal hosting `instance`. Used by
+    /// the quick-reply feature (#10) to send canned strings like "yes" / "continue".
+    func sendQuickReply(_ text: String, to instance: ClaudeInstance)
 }

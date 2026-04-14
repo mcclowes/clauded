@@ -3,8 +3,10 @@ import SwiftUI
 struct InstanceRow: View {
     let instance: ClaudeInstance
     let isSelected: Bool
+    let quickReplies: [String]
     let onTap: () -> Void
     let onToggleAutoYes: () -> Void
+    let onQuickReply: (String) -> Void
 
     @State private var isHovered = false
 
@@ -35,6 +37,7 @@ struct InstanceRow: View {
                     .lineLimit(1)
             }
             Spacer()
+            quickReplyChips
             autoYesToggle
             Text(relativeTime)
                 .font(.caption2)
@@ -52,6 +55,29 @@ struct InstanceRow: View {
         }
         .onHover { hovering in
             isHovered = hovering
+        }
+    }
+
+    @ViewBuilder
+    private var quickReplyChips: some View {
+        if instance.state == .awaitingInput, !quickReplies.isEmpty {
+            HStack(spacing: 4) {
+                ForEach(quickReplies, id: \.self) { reply in
+                    Button {
+                        onQuickReply(reply)
+                    } label: {
+                        Text(reply)
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                Capsule().fill(Color.accentColor.opacity(0.25))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Send \"\(reply)\" to this session")
+                }
+            }
         }
     }
 

@@ -6,6 +6,7 @@ struct InstancePanelView: View {
     @Environment(HookInstallState.self) private var hookState
     @Environment(AccessibilityPermissionState.self) private var accessibilityState
     @Environment(KeyBindingsStore.self) private var keyBindings
+    @Environment(QuickReplyController.self) private var quickReply
     @Environment(\.openSettings) private var openSettingsAction
 
     @State private var selectedId: String?
@@ -219,6 +220,7 @@ struct InstancePanelView: View {
                     InstanceRow(
                         instance: instance,
                         isSelected: instance.id == selectedId,
+                        quickReplies: quickReply.store.enabled ? quickReply.store.responses : [],
                         onTap: {
                             // Keep mouse and keyboard selection in sync so a subsequent
                             // keypress picks up where the user clicked.
@@ -242,6 +244,10 @@ struct InstancePanelView: View {
                                 sessionId: instance.id,
                                 enabled: !instance.autoYesEnabled
                             )
+                        },
+                        onQuickReply: { reply in
+                            selectedId = instance.id
+                            quickReply.send(reply, to: instance)
                         }
                     )
                 }
