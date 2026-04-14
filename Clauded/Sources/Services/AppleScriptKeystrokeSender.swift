@@ -45,6 +45,65 @@ final class AppleScriptKeystrokeSender: KeystrokeSender {
         }
     }
 
+    func sendQuickReply(_ text: String, to instance: ClaudeInstance) {
+        guard let pid = instance.pid else {
+            Self.logger.info("Skipping quick-reply for session with no pid: \(instance.id, privacy: .public)")
+            return
+        }
+        TerminalFocuser.focus(pid: pid)
+        let permissionState = permissionState
+        let sessionId = instance.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusSettleDelay) {
+            Self.runTextScript(text: text, sessionId: sessionId, permissionState: permissionState)
+        }
+    }
+
+    private static func runTextScript(
+        text: String,
+        sessionId: String,
+        permissionState: AccessibilityPermissionState?
+    ) {
+        // AppleScript string escaping: backslash and double-quote must be escaped.
+        // We intentionally do not support arbitrary payloads — the canned-response
+        // list is user-configurable but sanitised at the store boundary.
+        let escaped = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let source = """
+        tell application "System Events"
+            keystroke "\(escaped)"
+            delay 0.15
+            keystroke return
+        end tell
+        """
+        Task.detached(priority: .userInitiated) {
+            var error: NSDictionary?
+            NSAppleScript(source: source)?.executeAndReturnError(&error)
+            guard let error else { return }
+            let logger = Logger(subsystem: "com.mcclowes.clauded", category: "AppleScriptKeystrokeSender")
+            let code = (error["NSAppleScriptErrorNumber"] as? Int) ?? 0
+            if code == -1743 || code == 1002 {
+                logger.error(
+                    """
+                    Quick-reply failed: Accessibility permission denied for session \
+                    \(sessionId, privacy: .public).
+                    """
+                )
+                if let permissionState {
+                    Task { @MainActor in permissionState.markDenied() }
+                }
+            } else {
+                let errorDescription = String(describing: error)
+                logger.error(
+                    """
+                    Quick-reply AppleScript failed for session \(sessionId, privacy: .public): \
+                    \(errorDescription, privacy: .public)
+                    """
+                )
+            }
+        }
+    }
+
     private static func runKeystrokeScript(
         sessionId: String,
         permissionState: AccessibilityPermissionState?

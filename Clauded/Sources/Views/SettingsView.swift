@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(HookInstallState.self) private var hookState
     @Environment(LaunchAtLoginController.self) private var launchAtLogin
+    @Environment(QuickReplyStore.self) private var quickReplyStore
 
     var body: some View {
         TabView {
@@ -43,6 +44,25 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             }
 
+            Section("Quick reply") {
+                Toggle(
+                    "Enable quick-reply chips",
+                    isOn: Binding(
+                        get: { quickReplyStore.enabled },
+                        set: { quickReplyStore.setEnabled($0) }
+                    )
+                )
+                Text(
+                    "Awaiting-input rows get small chips for each canned response. Clicking a chip "
+                        + "focuses the terminal and types the response. Requires Accessibility permission."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                if quickReplyStore.enabled {
+                    responsesEditor
+                }
+            }
+
             Section("Startup") {
                 Toggle(
                     "Launch at login",
@@ -65,6 +85,32 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    @State private var draftResponses: String = ""
+
+    private var responsesEditor: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TextField(
+                "Responses (comma-separated)",
+                text: Binding(
+                    get: {
+                        draftResponses.isEmpty ? quickReplyStore.responses.joined(separator: ", ") : draftResponses
+                    },
+                    set: { draftResponses = $0 }
+                )
+            )
+            .onSubmit { commitResponses() }
+            Button("Save responses") { commitResponses() }
+                .controlSize(.small)
+                .disabled(draftResponses.isEmpty)
+        }
+    }
+
+    private func commitResponses() {
+        let parts = draftResponses.split(separator: ",").map(String.init)
+        quickReplyStore.setResponses(parts)
+        draftResponses = ""
     }
 
     private var statusDescription: String {

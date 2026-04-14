@@ -67,8 +67,13 @@ final class AutoYesResponderTests: XCTestCase {
 @MainActor
 final class SpyKeystrokeSender: KeystrokeSender {
     var delivered: [ClaudeInstance] = []
+    var quickReplies: [(String, ClaudeInstance)] = []
 
     func sendAutoYes(to instance: ClaudeInstance) {
         delivered.append(instance)
+    }
+
+    func sendQuickReply(_ text: String, to instance: ClaudeInstance) {
+        quickReplies.append((text, instance))
     }
 }
