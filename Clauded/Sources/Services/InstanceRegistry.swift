@@ -38,6 +38,12 @@ final class InstanceRegistry {
     @ObservationIgnored
     var onArmedAwaitingInput: ((ClaudeInstance) -> Void)?
 
+    /// Invoked for *every* `Notification` event (whether armed for auto-yes or not).
+    /// Wired up at app boot to drive `SessionNotifier`. Dedup policy lives in the
+    /// notifier — the registry just fans events out.
+    @ObservationIgnored
+    var onAwaitingInput: ((ClaudeInstance) -> Void)?
+
     /// Sessions recently removed by the reaper. Events arriving for these ids within the
     /// grace window are dropped rather than resurrecting the row.
     @ObservationIgnored
@@ -120,8 +126,11 @@ final class InstanceRegistry {
                 updated.lastMessage = message
             }
             instances[index] = updated
-            if event.kind == .notification, updated.autoYesEnabled {
-                onArmedAwaitingInput?(updated)
+            if event.kind == .notification {
+                onAwaitingInput?(updated)
+                if updated.autoYesEnabled {
+                    onArmedAwaitingInput?(updated)
+                }
             }
             return
         }

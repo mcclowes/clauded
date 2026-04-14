@@ -20,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var autoYesResponder: AutoYesResponder?
     private var globalHotkeyController: GlobalHotkeyController?
     private var quickReplyController: QuickReplyController?
+    private var sessionNotifier: SessionNotifier?
+    private var notificationPoster: UserNotificationPoster?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let daemon = HookDaemon(registry: registry)
@@ -36,6 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quickReplyController = quickReply
         registry.onArmedAwaitingInput = { [weak responder] instance in
             responder?.handle(instance)
+        }
+
+        let poster = UserNotificationPoster()
+        notificationPoster = poster
+        let notifier = SessionNotifier(poster: poster)
+        sessionNotifier = notifier
+        registry.onAwaitingInput = { [weak notifier] instance in
+            notifier?.notifyAwaitingInput(instance)
         }
 
         // Claude Code's SessionEnd hook doesn't fire when a terminal tab/window is
