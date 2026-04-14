@@ -14,6 +14,10 @@ enum InstanceState {
     case awaitingInput
     /// Agent finished its turn (Stop hook) but session is still alive.
     case finished
+    /// Session ended without a clean Stop hook first — the terminal tab was closed mid-turn
+    /// or the process died. Surfaced distinctly so users don't lose the signal that work
+    /// was in flight when the session disappeared.
+    case crashed
 }
 
 struct ClaudeInstance: Identifiable, Equatable {

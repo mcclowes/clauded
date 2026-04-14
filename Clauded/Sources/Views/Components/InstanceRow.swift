@@ -91,6 +91,7 @@ struct InstanceRow: View {
         case .working: .blue
         case .awaitingInput: .orange
         case .finished: .green
+        case .crashed: .red
         }
     }
 
@@ -105,6 +106,7 @@ struct InstanceRow: View {
         case .working: "Working…"
         case .awaitingInput: "Waiting for input"
         case .finished: "Finished"
+        case .crashed: "Crashed — session ended unexpectedly"
         }
     }
 

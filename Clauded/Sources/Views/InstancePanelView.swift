@@ -223,6 +223,12 @@ struct InstancePanelView: View {
                             // Keep mouse and keyboard selection in sync so a subsequent
                             // keypress picks up where the user clicked.
                             selectedId = instance.id
+                            // Crashed rows have no live terminal to focus — tapping
+                            // dismisses the marker instead, matching the issue spec.
+                            if instance.state == .crashed {
+                                registry.remove(sessionId: instance.id)
+                                return
+                            }
                             // Close the popover first so macOS's activation-restoration has
                             // already flushed by the time we bring the terminal to the front;
                             // otherwise the popover close fires after our activate and reverts
