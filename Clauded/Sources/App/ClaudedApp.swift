@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 self?.registry.reapDeadInstances()
+                self?.registry.dismissStaleCrashedInstances()
             }
         }
 

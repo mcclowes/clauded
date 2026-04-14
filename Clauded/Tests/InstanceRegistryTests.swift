@@ -452,6 +452,85 @@ final class InstanceRegistryTests: XCTestCase {
         XCTAssertEqual(registry.instances.count, 1, "Fresh session must not be blocked by prior clean end")
     }
 
+    // MARK: - Crash detection
+
+    func testSessionEndAfterStopRemovesInstance() {
+        // Clean exit: Stop fired, then SessionEnd. Row should go away.
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .stop, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .sessionEnd, id: "s1", project: "/a"))
+        XCTAssertTrue(registry.instances.isEmpty)
+    }
+
+    func testSessionEndWhileWorkingMarksCrashed() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .sessionEnd, id: "s1", project: "/a"))
+        XCTAssertEqual(registry.instances.count, 1)
+        XCTAssertEqual(registry.instances[0].state, .crashed)
+    }
+
+    func testSessionEndWhileAwaitingInputMarksCrashed() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .notification, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .sessionEnd, id: "s1", project: "/a"))
+        XCTAssertEqual(registry.instances[0].state, .crashed)
+    }
+
+    func testSessionEndFromIdleIsCleanExit() {
+        // A session that started and was closed before any prompt is not a crash.
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .sessionEnd, id: "s1", project: "/a"))
+        XCTAssertTrue(registry.instances.isEmpty)
+    }
+
+    func testCrashedInstanceDoesNotCountAsNeedsAttention() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a"))
+        registry.apply(event: makeEvent(kind: .sessionEnd, id: "s1", project: "/a"))
+        XCTAssertEqual(registry.needsAttentionCount, 0)
+    }
+
+    func testDismissStaleCrashedInstancesEvictsOldOnes() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a", at: clock))
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a", at: clock))
+        registry.apply(event: makeEvent(kind: .sessionEnd, id: "s1", project: "/a", at: clock))
+        XCTAssertEqual(registry.instances[0].state, .crashed)
+
+        // Well past the auto-dismiss threshold.
+        clock = clock.addingTimeInterval(InstanceRegistry.crashedAutoDismissAfter + 1)
+        registry.dismissStaleCrashedInstances()
+        XCTAssertTrue(registry.instances.isEmpty)
+    }
+
+    func testDismissStaleCrashedInstancesKeepsFreshOnes() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a", at: clock))
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a", at: clock))
+        registry.apply(event: makeEvent(kind: .sessionEnd, id: "s1", project: "/a", at: clock))
+
+        clock = clock.addingTimeInterval(30)
+        registry.dismissStaleCrashedInstances()
+        XCTAssertEqual(registry.instances.count, 1)
+    }
+
+    func testDismissStaleCrashedInstancesLeavesLivingSessions() {
+        let registry = InstanceRegistry()
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "live", project: "/a"))
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "live", project: "/a"))
+        registry.dismissStaleCrashedInstances()
+        XCTAssertEqual(registry.instances.count, 1, "Non-crashed rows must never be dismissed by this sweep")
+    }
+
     private func makeEvent(
         kind: HookEventKind,
         id: String,

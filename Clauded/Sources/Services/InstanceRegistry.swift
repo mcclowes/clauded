@@ -21,6 +21,10 @@ final class InstanceRegistry {
     /// events arriving after reap shouldn't resurrect the row as a zombie.
     private static let reapedEventGraceWindow: TimeInterval = 120
 
+    /// How long a `.crashed` row lingers in the panel before being auto-dismissed. The
+    /// user had a chance to see the red marker; past this threshold it's just clutter.
+    static let crashedAutoDismissAfter: TimeInterval = 600
+
     private(set) var instances: [ClaudeInstance] = []
 
     /// Global "turbo" switch. When on, every current session is armed with auto-yes and
@@ -84,8 +88,21 @@ final class InstanceRegistry {
 
         if let index = instances.firstIndex(where: { $0.id == event.sessionId }) {
             if event.kind == .sessionEnd {
-                instances.remove(at: index)
-                Self.logger.debug("Session ended: \(event.sessionId, privacy: .public)")
+                // Clean shutdown fires Stop → SessionEnd. If we never saw Stop, the session
+                // ended mid-flight (terminal closed, process killed) — surface that distinctly
+                // instead of silently dropping the row.
+                let wasCleanExit = instances[index].state == .finished
+                    || instances[index].state == .idle
+                if wasCleanExit {
+                    instances.remove(at: index)
+                    Self.logger.debug("Session ended cleanly: \(event.sessionId, privacy: .public)")
+                } else {
+                    var crashed = instances[index]
+                    crashed.state = .crashed
+                    crashed.lastActivity = event.timestamp
+                    instances[index] = crashed
+                    Self.logger.info("Session crashed: \(event.sessionId, privacy: .public)")
+                }
                 return
             }
             // Mutate through a local copy and replace in one shot so Observation fires once.
@@ -129,6 +146,14 @@ final class InstanceRegistry {
 
     func remove(sessionId: String) {
         instances.removeAll { $0.id == sessionId }
+    }
+
+    /// Drops `.crashed` rows whose marker has been visible longer than
+    /// `crashedAutoDismissAfter`. The row was kept around after its `SessionEnd` event so
+    /// the user could notice it; past the threshold it becomes noise.
+    func dismissStaleCrashedInstances() {
+        let cutoff = now().addingTimeInterval(-Self.crashedAutoDismissAfter)
+        instances.removeAll { $0.state == .crashed && $0.lastActivity < cutoff }
     }
 
     /// Arms or disarms auto-yes for a single session. No-op if the session is unknown.
@@ -235,8 +260,8 @@ final class InstanceRegistry {
         // Evict finished/idle sessions first, oldest-by-activity.
         let excess = instances.count - Self.maxInstances
         let sorted = instances.enumerated().sorted { lhs, rhs in
-            let lhsEvictable = lhs.element.state == .finished || lhs.element.state == .idle
-            let rhsEvictable = rhs.element.state == .finished || rhs.element.state == .idle
+            let lhsEvictable = Self.isEvictable(lhs.element.state)
+            let rhsEvictable = Self.isEvictable(rhs.element.state)
             if lhsEvictable != rhsEvictable {
                 return lhsEvictable
             }
@@ -246,6 +271,13 @@ final class InstanceRegistry {
         instances = instances.enumerated()
             .filter { !evictIndices.contains($0.offset) }
             .map(\.element)
+    }
+
+    private static func isEvictable(_ state: InstanceState) -> Bool {
+        switch state {
+        case .idle, .finished, .crashed: true
+        case .working, .awaitingInput: false
+        }
     }
 
     private func state(for kind: HookEventKind) -> InstanceState {
