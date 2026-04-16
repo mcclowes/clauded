@@ -50,7 +50,60 @@ final class AutoYesResponderTests: XCTestCase {
         XCTAssertEqual(sender.delivered.map(\.id), ["s1", "s2"])
     }
 
-    private func makeInstance(id: String) -> ClaudeInstance {
+    func testHandleSkipsIdleWaitingNotification() {
+        // The 60-second "Claude is waiting for your input" nudge fires the same
+        // Notification hook as a permission prompt, but there's no numbered menu
+        // to answer — typing `1` would submit a literal `1` as the user's next
+        // message. Regression guard for #30.
+        let sender = SpyKeystrokeSender()
+        let responder = AutoYesResponder(sender: sender, minimumInterval: 7, now: { Date() })
+
+        responder.handle(makeInstance(id: "s1", message: "Claude is waiting for your input"))
+
+        XCTAssertTrue(sender.delivered.isEmpty)
+    }
+
+    func testHandleSkipsUnknownNotification() {
+        // Safe default: anything we can't positively identify as a permission
+        // prompt is treated as non-actionable. A missed auto-yes is recoverable
+        // by the user; a phantom `1` submission is not.
+        let sender = SpyKeystrokeSender()
+        let responder = AutoYesResponder(sender: sender, minimumInterval: 7, now: { Date() })
+
+        responder.handle(makeInstance(id: "s1", message: "Something weird happened"))
+        responder.handle(makeInstance(id: "s2", message: nil))
+        responder.handle(makeInstance(id: "s3", message: ""))
+
+        XCTAssertTrue(sender.delivered.isEmpty)
+    }
+
+    func testHandleFiresOnPermissionPrompt() {
+        let sender = SpyKeystrokeSender()
+        let responder = AutoYesResponder(sender: sender, minimumInterval: 7, now: { Date() })
+
+        responder.handle(makeInstance(id: "s1", message: "Claude needs your permission to use Bash"))
+
+        XCTAssertEqual(sender.delivered.map(\.id), ["s1"])
+    }
+
+    func testSkippedMessageDoesNotConsumeDebounceSlot() {
+        // An idle-notification skip must not start the debounce clock — otherwise
+        // a legitimate permission prompt arriving seconds later would be swallowed.
+        let sender = SpyKeystrokeSender()
+        var clock = Date()
+        let responder = AutoYesResponder(sender: sender, minimumInterval: 7, now: { clock })
+
+        responder.handle(makeInstance(id: "s1", message: "Claude is waiting for your input"))
+        clock = clock.addingTimeInterval(1)
+        responder.handle(makeInstance(id: "s1", message: "Claude needs your permission to use Bash"))
+
+        XCTAssertEqual(sender.delivered.map(\.id), ["s1"])
+    }
+
+    private func makeInstance(
+        id: String,
+        message: String? = "Claude needs your permission to use Bash"
+    ) -> ClaudeInstance {
         ClaudeInstance(
             id: id,
             projectDir: "/tmp/proj",
@@ -58,7 +111,7 @@ final class AutoYesResponderTests: XCTestCase {
             processStartTime: nil,
             state: .awaitingInput,
             lastActivity: Date(),
-            lastMessage: nil,
+            lastMessage: message,
             autoYesEnabled: true
         )
     }
