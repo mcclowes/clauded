@@ -11,7 +11,9 @@ final class QuickReplyStoreTests: XCTestCase {
     /// Xcode 16.4 (Swift 6) rejects the sync versions touching `defaults` because the
     /// base setUp()/tearDown() are nonisolated.
     override func setUp() async throws {
-        try await super.setUp()
+        // Skip the `super` call: XCTestCase.setUp() is a no-op and on Xcode 16.4
+        // sending the non-Sendable XCTestCase across the await boundary trips strict
+        // concurrency. Same for tearDown.
         defaults = UserDefaults(suiteName: suiteName)
         defaults.removePersistentDomain(forName: suiteName)
     }
@@ -19,7 +21,6 @@ final class QuickReplyStoreTests: XCTestCase {
     override func tearDown() async throws {
         defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
-        try await super.tearDown()
     }
 
     func testDefaultsToDisabledWithCannedResponses() {
