@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let keyBindings = KeyBindingsStore()
     let globalHotkeys = GlobalHotkeyStore()
     let quickReplyStore = QuickReplyStore()
+    let autoYesRules = AutoYesRulesStore()
 
     private var daemon: HookDaemon?
     private var statusBarController: StatusBarController?
@@ -32,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController = statusBar
 
         let keystrokeSender = AppleScriptKeystrokeSender(permissionState: accessibilityState)
-        let responder = AutoYesResponder(sender: keystrokeSender)
+        let responder = AutoYesResponder(sender: keystrokeSender, rules: autoYesRules)
         autoYesResponder = responder
         let quickReply = QuickReplyController(store: quickReplyStore, sender: keystrokeSender)
         quickReplyController = quickReply
@@ -106,12 +107,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         withObservationTracking { [weak self] in
             _ = self?.globalHotkeys.jumpToAttention
         } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                globalHotkeyController?.update(binding: globalHotkeys.jumpToAttention)
-                observeGlobalHotkeyBinding()
+            // Factored into a method so the Task closure has no implicit-self
+            // references — Xcode 16.4 requires explicit `self.` there under Swift 6,
+            // which in turn fights SwiftFormat's `redundantSelf` rule.
+            Task { @MainActor in
+                self?.reapplyGlobalHotkeyBinding()
             }
         }
+    }
+
+    private func reapplyGlobalHotkeyBinding() {
+        globalHotkeyController?.update(binding: globalHotkeys.jumpToAttention)
+        observeGlobalHotkeyBinding()
     }
 
     private func handleJumpToAttention() {
@@ -150,6 +157,8 @@ struct ClaudedApp: App {
                 .environment(appDelegate.keyBindings)
                 .environment(appDelegate.globalHotkeys)
                 .environment(appDelegate.quickReplyStore)
+                .environment(appDelegate.autoYesRules)
+                .environment(appDelegate.registry)
         }
     }
 }

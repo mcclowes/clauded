@@ -7,16 +7,20 @@ final class QuickReplyStoreTests: XCTestCase {
     private var defaults: UserDefaults!
     private let suiteName = "com.mcclowes.clauded.quickReplyTests"
 
-    override func setUp() {
-        super.setUp()
+    /// Async overrides so XCTest calls them on the MainActor the class is isolated to.
+    /// Xcode 16.4 (Swift 6) rejects the sync versions touching `defaults` because the
+    /// base setUp()/tearDown() are nonisolated.
+    override func setUp() async throws {
+        // Skip the `super` call: XCTestCase.setUp() is a no-op and on Xcode 16.4
+        // sending the non-Sendable XCTestCase across the await boundary trips strict
+        // concurrency. Same for tearDown.
         defaults = UserDefaults(suiteName: suiteName)
         defaults.removePersistentDomain(forName: suiteName)
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         defaults.removePersistentDomain(forName: suiteName)
         defaults = nil
-        super.tearDown()
     }
 
     func testDefaultsToDisabledWithCannedResponses() {
