@@ -107,12 +107,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         withObservationTracking { [weak self] in
             _ = self?.globalHotkeys.jumpToAttention
         } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                globalHotkeyController?.update(binding: globalHotkeys.jumpToAttention)
-                observeGlobalHotkeyBinding()
+            // Factored into a method so the Task closure has no implicit-self
+            // references — Xcode 16.4 requires explicit `self.` there under Swift 6,
+            // which in turn fights SwiftFormat's `redundantSelf` rule.
+            Task { @MainActor in
+                self?.reapplyGlobalHotkeyBinding()
             }
         }
+    }
+
+    private func reapplyGlobalHotkeyBinding() {
+        globalHotkeyController?.update(binding: globalHotkeys.jumpToAttention)
+        observeGlobalHotkeyBinding()
     }
 
     private func handleJumpToAttention() {
