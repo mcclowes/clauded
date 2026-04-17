@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let keyBindings = KeyBindingsStore()
     let globalHotkeys = GlobalHotkeyStore()
     let quickReplyStore = QuickReplyStore()
+    let autoYesRules = AutoYesRulesStore()
 
     private var daemon: HookDaemon?
     private var statusBarController: StatusBarController?
@@ -32,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusBarController = statusBar
 
         let keystrokeSender = AppleScriptKeystrokeSender(permissionState: accessibilityState)
-        let responder = AutoYesResponder(sender: keystrokeSender)
+        let responder = AutoYesResponder(sender: keystrokeSender, rules: autoYesRules)
         autoYesResponder = responder
         let quickReply = QuickReplyController(store: quickReplyStore, sender: keystrokeSender)
         quickReplyController = quickReply
@@ -150,6 +151,8 @@ struct ClaudedApp: App {
                 .environment(appDelegate.keyBindings)
                 .environment(appDelegate.globalHotkeys)
                 .environment(appDelegate.quickReplyStore)
+                .environment(appDelegate.autoYesRules)
+                .environment(appDelegate.registry)
         }
     }
 }

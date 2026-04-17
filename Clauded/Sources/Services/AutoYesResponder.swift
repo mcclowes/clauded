@@ -3,7 +3,7 @@ import os
 
 /// Delivers a synthetic "yes" keystroke when an armed instance is waiting on input.
 ///
-/// The responder owns three pieces of policy the registry deliberately doesn't:
+/// The responder owns four pieces of policy the registry deliberately doesn't:
 ///
 /// 1. A message classifier. Claude Code's `Notification` hook fires for both
 ///    numbered permission prompts *and* idle "waiting for your input" nudges.
@@ -12,11 +12,15 @@ import os
 ///    send so only permission-style messages trigger the keystroke, with
 ///    unrecognised messages skipped on the "missed auto-yes is cheaper than a
 ///    spurious submission" principle.
-/// 2. A per-session debounce table. Claude Code can fire `Notification` hooks in
+/// 2. A rule lookup. After the classifier passes, the responder asks the
+///    `AutoYesRulesStore` whether this specific message — in this specific
+///    codebase — should actually be auto-approved. This is where user-configured
+///    "don't auto-approve `rm -rf` in the payments repo" policy lives.
+/// 3. A per-session debounce table. Claude Code can fire `Notification` hooks in
 ///    quick succession (e.g. nested permission prompts); the user-configured
 ///    minimum interval prevents an auto-yes runaway from machine-gunning a
 ///    terminal that's no longer paying attention.
-/// 3. A clock seam. Tests inject `now` so debounce behaviour is deterministic
+/// 4. A clock seam. Tests inject `now` so debounce behaviour is deterministic
 ///    without needing to advance real time.
 ///
 /// All keystroke delivery is delegated to a `KeystrokeSender` so the AppleScript
@@ -26,24 +30,36 @@ final class AutoYesResponder {
     private static let logger = Logger(subsystem: "com.mcclowes.clauded", category: "AutoYesResponder")
 
     private let sender: KeystrokeSender
+    private let rules: AutoYesRulesStore
     private let minimumInterval: TimeInterval
     private let now: () -> Date
     private var lastFiredAt: [String: Date] = [:]
 
     init(
         sender: KeystrokeSender,
+        rules: AutoYesRulesStore,
         minimumInterval: TimeInterval = 4,
         now: @escaping () -> Date = Date.init
     ) {
         self.sender = sender
+        self.rules = rules
         self.minimumInterval = minimumInterval
         self.now = now
     }
 
     func handle(_ instance: ClaudeInstance) {
-        guard Self.isPermissionPrompt(message: instance.lastMessage) else {
+        guard let message = instance.lastMessage,
+              Self.isPermissionPrompt(message: message)
+        else {
             Self.logger.debug(
                 "auto-yes skipped for session \(instance.id, privacy: .public) — not a permission prompt"
+            )
+            return
+        }
+        let action = rules.resolveAction(message: message, projectDir: instance.projectDir)
+        guard action == .approve else {
+            Self.logger.debug(
+                "auto-yes skipped for session \(instance.id, privacy: .public) — rule action=\(action.rawValue, privacy: .public)"
             )
             return
         }

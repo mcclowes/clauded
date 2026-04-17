@@ -9,10 +9,13 @@ struct SettingsView: View {
         TabView {
             generalTab
                 .tabItem { Label("General", systemImage: "gear") }
+            RulesSettingsView()
+                .tabItem { Label("Rules", systemImage: "checklist") }
+                .frame(width: 520, height: 460)
             ShortcutsSettingsView()
                 .tabItem { Label("Shortcuts", systemImage: "keyboard") }
         }
-        .frame(width: 480, height: 380)
+        .frame(width: 520, height: 460)
     }
 
     private var generalTab: some View {
