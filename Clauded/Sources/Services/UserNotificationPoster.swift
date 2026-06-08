@@ -50,10 +50,11 @@ final class UserNotificationPoster: NSObject, NotificationPosting, UNUserNotific
         // The async variant hops isolation correctly. The completion-handler form
         // inherits this type's @MainActor isolation but is invoked by
         // UNUserNotificationCenter on a background queue, which trips Swift 6's
-        // runtime isolation assertion and crashes.
+        // runtime isolation assertion and crashes. Fetch the (thread-safe) singleton
+        // locally so it isn't sent out of the main actor's isolation region.
         Task {
             do {
-                try await center.add(request)
+                try await UNUserNotificationCenter.current().add(request)
             } catch {
                 userNotificationLogger.error("Notification post failed: \(String(describing: error), privacy: .public)")
             }
@@ -107,9 +108,12 @@ final class UserNotificationPoster: NSObject, NotificationPosting, UNUserNotific
         // Use the async variant: the completion-handler form's closure inherits
         // @MainActor isolation but is called back on a background queue, which
         // crashes under Swift 6 strict concurrency (isolation assertion at launch).
+        // Fetch the singleton locally so the main actor-isolated `center` isn't
+        // sent into the nonisolated async call.
         Task {
             do {
-                let granted = try await center.requestAuthorization(options: [.alert, .sound])
+                let granted = try await UNUserNotificationCenter.current()
+                    .requestAuthorization(options: [.alert, .sound])
                 if !granted {
                     userNotificationLogger.info("Notification authorization denied by user")
                 }
