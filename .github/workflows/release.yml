@@ -130,7 +130,9 @@ jobs:
 
       - name: Update Homebrew tap
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # RELEASE_TOKEN must have Contents: write on mcclowes/homebrew-clauded
+          # (classic PAT with repo scope, or fine-grained PAT including that repo).
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           # Strip the leading "v" from the tag for the cask version field.
           CASK_VERSION="${GITHUB_REF_NAME#v}"
