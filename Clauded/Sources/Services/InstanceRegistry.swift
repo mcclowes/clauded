@@ -44,6 +44,12 @@ final class InstanceRegistry {
     @ObservationIgnored
     var onAwaitingInput: ((ClaudeInstance) -> Void)?
 
+    /// Invoked once for every genuine hook event the registry accepts (i.e. after the
+    /// reaped-session grace-window drop). Wired up at app boot to feed `DailySummaryService`
+    /// without coupling the daemon to it.
+    @ObservationIgnored
+    var onEvent: ((HookEvent) -> Void)?
+
     /// Sessions recently removed by the reaper. Events arriving for these ids within the
     /// grace window are dropped rather than resurrecting the row.
     @ObservationIgnored
@@ -89,6 +95,8 @@ final class InstanceRegistry {
             Self.logger.debug("Dropping late event for reaped session: \(event.sessionId, privacy: .public)")
             return
         }
+
+        onEvent?(event)
 
         let newState = state(for: event.kind)
 
