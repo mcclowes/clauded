@@ -10,6 +10,10 @@ enum InstanceState {
     case idle
     /// A prompt was submitted and the agent is working.
     case working
+    /// Was `.working` but has gone silent past the stuck threshold — almost always a hung
+    /// tool call. Derived by a periodic sweep rather than a hook event, and cleared
+    /// automatically the moment the next event for the session arrives.
+    case stuck
     /// The agent has fired a Notification hook — waiting on the user (permission prompt or idle input).
     case awaitingInput
     /// Agent finished its turn (Stop hook) but session is still alive.
@@ -40,6 +44,6 @@ struct ClaudeInstance: Identifiable, Equatable {
     }
 
     var needsAttention: Bool {
-        state == .awaitingInput
+        state == .awaitingInput || state == .stuck
     }
 }

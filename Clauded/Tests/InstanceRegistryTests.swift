@@ -531,6 +531,98 @@ final class InstanceRegistryTests: XCTestCase {
         XCTAssertEqual(registry.instances.count, 1, "Non-crashed rows must never be dismissed by this sweep")
     }
 
+    // MARK: - Stuck detection
+
+    func testMarkStuckFlipsWorkingSessionPastThreshold() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "s1", project: "/a", at: clock))
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a", at: clock))
+
+        clock = clock.addingTimeInterval(InstanceRegistry.stuckThreshold + 1)
+        registry.markStuckInstances()
+
+        XCTAssertEqual(registry.instances[0].state, .stuck)
+    }
+
+    func testMarkStuckLeavesRecentlyActiveWorkingSession() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a", at: clock))
+
+        // Just shy of the threshold — still legitimately working.
+        clock = clock.addingTimeInterval(InstanceRegistry.stuckThreshold - 1)
+        registry.markStuckInstances()
+
+        XCTAssertEqual(registry.instances[0].state, .working)
+    }
+
+    func testMarkStuckIsExclusiveAtTheBoundary() {
+        // lastActivity exactly `threshold` ago must NOT flip — the cutoff is strict.
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a", at: clock))
+
+        clock = clock.addingTimeInterval(InstanceRegistry.stuckThreshold)
+        registry.markStuckInstances()
+
+        XCTAssertEqual(registry.instances[0].state, .working, "Exactly at the threshold is not yet stuck")
+    }
+
+    func testMarkStuckIgnoresNonWorkingStates() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "idle", project: "/a", at: clock))
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "waiting", project: "/b", at: clock))
+        registry.apply(event: makeEvent(kind: .notification, id: "waiting", project: "/b", at: clock))
+
+        clock = clock.addingTimeInterval(InstanceRegistry.stuckThreshold + 100)
+        registry.markStuckInstances()
+
+        XCTAssertEqual(registry.instances.first(where: { $0.id == "idle" })?.state, .idle)
+        XCTAssertEqual(registry.instances.first(where: { $0.id == "waiting" })?.state, .awaitingInput)
+    }
+
+    func testStuckSessionCountsTowardNeedsAttention() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a", at: clock))
+        XCTAssertEqual(registry.needsAttentionCount, 0)
+
+        clock = clock.addingTimeInterval(InstanceRegistry.stuckThreshold + 1)
+        registry.markStuckInstances()
+
+        XCTAssertEqual(registry.needsAttentionCount, 1)
+        XCTAssertEqual(registry.oldestAwaitingAttention?.id, "s1")
+    }
+
+    func testStuckSessionRecoversWhenNewEventArrives() {
+        // A hung tool that eventually completes fires its next hook event; the row must
+        // transition back out of `.stuck` rather than staying stuck forever.
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a", at: clock))
+        clock = clock.addingTimeInterval(InstanceRegistry.stuckThreshold + 1)
+        registry.markStuckInstances()
+        XCTAssertEqual(registry.instances[0].state, .stuck)
+
+        registry.apply(event: makeEvent(kind: .stop, id: "s1", project: "/a", at: clock))
+        XCTAssertEqual(registry.instances[0].state, .finished)
+        XCTAssertEqual(registry.needsAttentionCount, 0)
+    }
+
+    func testStuckSessionEndingWhileStuckIsCrash() {
+        // A stuck session whose terminal is then closed should surface as a crash, not a
+        // clean exit — work was in flight.
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a", at: clock))
+        clock = clock.addingTimeInterval(InstanceRegistry.stuckThreshold + 1)
+        registry.markStuckInstances()
+        registry.apply(event: makeEvent(kind: .sessionEnd, id: "s1", project: "/a", at: clock))
+        XCTAssertEqual(registry.instances[0].state, .crashed)
+    }
+
     private func makeEvent(
         kind: HookEventKind,
         id: String,

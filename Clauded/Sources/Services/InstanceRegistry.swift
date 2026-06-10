@@ -25,6 +25,11 @@ final class InstanceRegistry {
     /// user had a chance to see the red marker; past this threshold it's just clutter.
     static let crashedAutoDismissAfter: TimeInterval = 600
 
+    /// A `.working` session with no hook traffic for longer than this is treated as
+    /// `.stuck` — almost always a tool call that has hung. A genuinely slow-but-alive
+    /// session clears itself the moment its next hook event lands.
+    static let stuckThreshold: TimeInterval = 300
+
     private(set) var instances: [ClaudeInstance] = []
 
     /// Global "turbo" switch. When on, every current session is armed with auto-yes and
@@ -165,6 +170,22 @@ final class InstanceRegistry {
         instances.removeAll { $0.state == .crashed && $0.lastActivity < cutoff }
     }
 
+    /// Promotes `.working` sessions that have gone silent past `stuckThreshold` to
+    /// `.stuck`, so a hung tool call surfaces in the attention count instead of sitting
+    /// silently in `working`. A subsequent hook event transitions the row back out
+    /// naturally via `apply()`, so recovery needs no special-casing here.
+    ///
+    /// The threshold is injectable so tests can exercise the boundary without waiting.
+    func markStuckInstances(threshold: TimeInterval = InstanceRegistry.stuckThreshold) {
+        let cutoff = now().addingTimeInterval(-threshold)
+        for index in instances.indices
+            where instances[index].state == .working && instances[index].lastActivity < cutoff
+        {
+            instances[index].state = .stuck
+            Self.logger.info("Session stuck: \(self.instances[index].id, privacy: .public)")
+        }
+    }
+
     /// Arms or disarms auto-yes for a single session. No-op if the session is unknown.
     func setAutoYes(sessionId: String, enabled: Bool) {
         guard let index = instances.firstIndex(where: { $0.id == sessionId }) else { return }
@@ -285,7 +306,7 @@ final class InstanceRegistry {
     private static func isEvictable(_ state: InstanceState) -> Bool {
         switch state {
         case .idle, .finished, .crashed: true
-        case .working, .awaitingInput: false
+        case .working, .stuck, .awaitingInput: false
         }
     }
 
