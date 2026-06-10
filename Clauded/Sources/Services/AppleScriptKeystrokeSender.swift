@@ -19,10 +19,11 @@ import os
 final class AppleScriptKeystrokeSender: KeystrokeSender {
     private static let logger = Logger(subsystem: "com.mcclowes.clauded", category: "AppleScriptKeystrokeSender")
 
-    /// Delay between focusing the terminal and sending the keystroke. Without this,
-    /// the keystroke arrives before the focus change has been picked up by the
-    /// terminal and gets dropped on the floor (or, worse, types into whatever app
-    /// happened to be frontmost).
+    /// Settle delay applied *after* `TerminalFocuser` reports the focus change is
+    /// done, before we type. Even once the focus AppleScript returns, the window
+    /// server needs a beat to make the terminal key; without this the keystroke can
+    /// still arrive a hair early. This is a top-up on top of focus completion — not a
+    /// guess at how long focus takes — so it can stay small.
     private static let focusSettleDelay: TimeInterval = 0.15
 
     private let permissionState: AccessibilityPermissionState?
@@ -36,12 +37,15 @@ final class AppleScriptKeystrokeSender: KeystrokeSender {
             Self.logger.info("Skipping auto-yes for session with no pid: \(instance.id, privacy: .public)")
             return
         }
-        TerminalFocuser.focus(pid: pid)
-        // Schedule the keystroke onto the next runloop tick + a small settle delay
-        // so the focus change has time to land before we type into it.
+        // Send the keystroke from focus's completion (plus a small settle) rather than
+        // a fixed timer started before focus even runs — otherwise the keystroke races
+        // a slow focus AppleScript and lands before the terminal is frontmost.
         let permissionState = permissionState
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusSettleDelay) {
-            Self.runKeystrokeScript(sessionId: instance.id, permissionState: permissionState)
+        let sessionId = instance.id
+        TerminalFocuser.focus(pid: pid) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusSettleDelay) {
+                Self.runKeystrokeScript(sessionId: sessionId, permissionState: permissionState)
+            }
         }
     }
 
@@ -50,11 +54,12 @@ final class AppleScriptKeystrokeSender: KeystrokeSender {
             Self.logger.info("Skipping quick-reply for session with no pid: \(instance.id, privacy: .public)")
             return
         }
-        TerminalFocuser.focus(pid: pid)
         let permissionState = permissionState
         let sessionId = instance.id
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusSettleDelay) {
-            Self.runTextScript(text: text, sessionId: sessionId, permissionState: permissionState)
+        TerminalFocuser.focus(pid: pid) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusSettleDelay) {
+                Self.runTextScript(text: text, sessionId: sessionId, permissionState: permissionState)
+            }
         }
     }
 

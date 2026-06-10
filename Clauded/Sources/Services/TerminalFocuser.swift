@@ -31,7 +31,13 @@ enum TerminalFocuser {
     /// weak to be useful on macOS 14+).
     private static let activationOptions: NSApplication.ActivationOptions = [.activateAllWindows]
 
-    static func focus(pid: Int32?) {
+    /// Focuses the terminal window for `pid`. `completion` fires on the main actor
+    /// once activation has actually been issued (for Apple Terminal, after the focus
+    /// AppleScript returns — not on a guessed timer). Keystroke senders chain off this
+    /// so they never type into a window that hasn't come forward yet. `completion` is
+    /// deliberately *not* called when no terminal can be resolved, so callers don't
+    /// fire a blind keystroke into whatever app happens to be frontmost.
+    static func focus(pid: Int32?, completion: (@MainActor @Sendable () -> Void)? = nil) {
         guard let pid else { return }
         guard let terminalPid = findAncestorTerminalPid(startingFrom: pid) else {
             Self.logger.info("No known terminal ancestor found for pid \(pid)")
@@ -46,14 +52,19 @@ enum TerminalFocuser {
         // change, producing the "flicker then revert" behaviour.
         DispatchQueue.main.async {
             if let tty {
-                focusAppleTerminalTab(tty: tty, fallback: app)
+                focusAppleTerminalTab(tty: tty, fallback: app, completion: completion)
             } else {
                 app.activate(options: activationOptions)
+                completion?()
             }
         }
     }
 
-    private static func focusAppleTerminalTab(tty: String, fallback: NSRunningApplication) {
+    private static func focusAppleTerminalTab(
+        tty: String,
+        fallback: NSRunningApplication,
+        completion: (@MainActor @Sendable () -> Void)? = nil
+    ) {
         // Escape both backslashes and quotes. Missing backslash escaping is a classic
         // script-injection footgun even when the *current* input (devname output) can't
         // contain them — belt-and-braces is cheap.
@@ -83,21 +94,27 @@ enum TerminalFocuser {
         Task.detached(priority: .userInitiated) {
             var error: NSDictionary?
             NSAppleScript(source: source)?.executeAndReturnError(&error)
-            guard let error else { return }
-            let logger = Logger(subsystem: "com.mcclowes.clauded", category: "TerminalFocuser")
-            let code = (error["NSAppleScriptErrorNumber"] as? Int) ?? 0
-            if code == -1743 {
-                logger.error(
-                    """
-                    Terminal.app Automation permission denied. \
-                    Grant access in System Settings → Privacy & Security → Automation.
-                    """
-                )
-            } else {
-                let errorDescription = String(describing: error)
-                logger.error("Terminal.app tab focus AppleScript failed: \(errorDescription, privacy: .public)")
+            if let error {
+                let logger = Logger(subsystem: "com.mcclowes.clauded", category: "TerminalFocuser")
+                let code = (error["NSAppleScriptErrorNumber"] as? Int) ?? 0
+                if code == -1743 {
+                    logger.error(
+                        """
+                        Terminal.app Automation permission denied. \
+                        Grant access in System Settings → Privacy & Security → Automation.
+                        """
+                    )
+                } else {
+                    let errorDescription = String(describing: error)
+                    logger.error("Terminal.app tab focus AppleScript failed: \(errorDescription, privacy: .public)")
+                }
+                _ = await MainActor.run { fallback.activate(options: activationOptions) }
             }
-            _ = await MainActor.run { fallback.activate(options: activationOptions) }
+            // Signal completion only after the focus script (and any fallback activate)
+            // has run, so the keystroke that follows lands in a window that's already up.
+            if let completion {
+                await MainActor.run { completion() }
+            }
         }
     }
 
