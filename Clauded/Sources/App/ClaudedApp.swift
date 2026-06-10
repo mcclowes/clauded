@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let globalHotkeys = GlobalHotkeyStore()
     let quickReplyStore = QuickReplyStore()
     let autoYesRules = AutoYesRulesStore()
+    let idleReaper = IdleReaperStore()
 
     private var daemon: HookDaemon?
     private var statusBarController: StatusBarController?
@@ -57,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? await Task.sleep(for: .seconds(30))
                 self?.registry.reapDeadInstances()
                 self?.registry.dismissStaleCrashedInstances()
+                self?.runIdleReaper()
             }
         }
 
@@ -70,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         .environment(accessibilityState)
         .environment(keyBindings)
         .environment(quickReply)
+        .environment(idleReaper)
 
         statusBar.setup(contentView: panel)
 
@@ -116,6 +119,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Auto-close is the only idle behaviour that mutates the registry from the sweep;
+    /// `.off` and `.collapse` are presentation-only and handled in the panel.
+    private func runIdleReaper() {
+        guard idleReaper.behavior == .autoClose else { return }
+        registry.autoCloseStaleInstances(threshold: idleReaper.threshold)
+    }
+
     private func reapplyGlobalHotkeyBinding() {
         globalHotkeyController?.update(binding: globalHotkeys.jumpToAttention)
         observeGlobalHotkeyBinding()
@@ -159,6 +169,7 @@ struct ClaudedApp: App {
                 .environment(appDelegate.quickReplyStore)
                 .environment(appDelegate.autoYesRules)
                 .environment(appDelegate.registry)
+                .environment(appDelegate.idleReaper)
         }
     }
 }

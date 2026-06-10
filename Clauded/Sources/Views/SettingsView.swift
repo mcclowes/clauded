@@ -4,6 +4,7 @@ struct SettingsView: View {
     @Environment(HookInstallState.self) private var hookState
     @Environment(LaunchAtLoginController.self) private var launchAtLogin
     @Environment(QuickReplyStore.self) private var quickReplyStore
+    @Environment(IdleReaperStore.self) private var idleReaper
 
     var body: some View {
         TabView {
@@ -64,6 +65,40 @@ struct SettingsView: View {
                 if quickReplyStore.enabled {
                     responsesEditor
                 }
+            }
+
+            Section("Idle sessions") {
+                Picker(
+                    "When a session sits idle",
+                    selection: Binding(
+                        get: { idleReaper.behavior },
+                        set: { idleReaper.setBehavior($0) }
+                    )
+                ) {
+                    ForEach(IdleBehavior.allCases) { behavior in
+                        Text(behavior.label).tag(behavior)
+                    }
+                }
+                Picker(
+                    "Idle after",
+                    selection: Binding(
+                        get: { idleReaper.threshold },
+                        set: { idleReaper.setThreshold($0) }
+                    )
+                ) {
+                    Text("1 hour").tag(TimeInterval(3600))
+                    Text("2 hours").tag(TimeInterval(7200))
+                    Text("4 hours").tag(TimeInterval(14400))
+                    Text("8 hours").tag(TimeInterval(28800))
+                }
+                .disabled(idleReaper.behavior == .off)
+                Text(
+                    "Collapse tucks idle sessions into a group at the bottom of the panel. "
+                        + "Close automatically sends SIGTERM to the session's process — only pick "
+                        + "this if you're comfortable ending whatever it was doing."
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             }
 
             Section("Startup") {

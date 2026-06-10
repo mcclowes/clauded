@@ -531,6 +531,105 @@ final class InstanceRegistryTests: XCTestCase {
         XCTAssertEqual(registry.instances.count, 1, "Non-crashed rows must never be dismissed by this sweep")
     }
 
+    // MARK: - Idle reaper
+
+    func testStaleInstanceIDsReturnsSessionsIdlePastThreshold() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "fresh", project: "/a", at: clock))
+        registry.apply(
+            event: makeEvent(kind: .userPromptSubmit, id: "old", project: "/b", at: clock.addingTimeInterval(-7200))
+        )
+
+        clock = clock.addingTimeInterval(1)
+        let stale = registry.staleInstanceIDs(threshold: 3600)
+
+        XCTAssertEqual(stale, ["old"])
+    }
+
+    func testStaleInstanceIDsExcludesSessionsAwaitingInput() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "waiting", project: "/a", at: clock))
+        registry.apply(event: makeEvent(kind: .notification, id: "waiting", project: "/a", at: clock))
+
+        clock = clock.addingTimeInterval(86400)
+        XCTAssertTrue(
+            registry.staleInstanceIDs(threshold: 3600).isEmpty,
+            "A session awaiting the user is never stale — it needs attention, not hiding"
+        )
+    }
+
+    func testStaleInstanceIDsBoundaryIsExclusive() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "s1", project: "/a", at: clock))
+
+        clock = clock.addingTimeInterval(3600)
+        XCTAssertTrue(
+            registry.staleInstanceIDs(threshold: 3600).isEmpty,
+            "Exactly at the threshold is not yet stale"
+        )
+    }
+
+    func testAutoCloseTerminatesAndRemovesStaleSessions() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "old", project: "/b", at: clock, pid: 20))
+
+        // Advance past the threshold, then register a session that's active *now* — only
+        // the older one should be auto-closed.
+        clock = clock.addingTimeInterval(7200)
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "fresh", project: "/a", at: clock, pid: 10))
+
+        var terminated: [pid_t] = []
+        registry.autoCloseStaleInstances(threshold: 3600, terminate: { terminated.append($0) })
+
+        XCTAssertEqual(terminated, [20])
+        XCTAssertEqual(registry.instances.map(\.id), ["fresh"])
+    }
+
+    func testAutoCloseSkipsSessionsAwaitingInput() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .sessionStart, id: "waiting", project: "/a", at: clock, pid: 30))
+        registry.apply(event: makeEvent(kind: .notification, id: "waiting", project: "/a", at: clock, pid: 30))
+
+        clock = clock.addingTimeInterval(86400)
+        var terminated: [pid_t] = []
+        registry.autoCloseStaleInstances(threshold: 3600, terminate: { terminated.append($0) })
+
+        XCTAssertTrue(terminated.isEmpty)
+        XCTAssertEqual(registry.instances.count, 1, "Awaiting-input sessions must survive auto-close")
+    }
+
+    func testAutoCloseRemovesPidlessSessionsWithoutTerminating() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "nopid", project: "/a", at: clock, pid: nil))
+
+        clock = clock.addingTimeInterval(7200)
+        var terminateCalls = 0
+        registry.autoCloseStaleInstances(threshold: 3600, terminate: { _ in terminateCalls += 1 })
+
+        XCTAssertEqual(terminateCalls, 0)
+        XCTAssertTrue(registry.instances.isEmpty, "A pid-less idle row should still be dropped")
+    }
+
+    func testAutoCloseDropsLateEventsForClosedSessions() {
+        var clock = Date(timeIntervalSince1970: 1_700_000_000)
+        let registry = InstanceRegistry(now: { clock })
+        registry.apply(event: makeEvent(kind: .userPromptSubmit, id: "old", project: "/a", at: clock, pid: 40))
+
+        clock = clock.addingTimeInterval(7200)
+        registry.autoCloseStaleInstances(threshold: 3600, terminate: { _ in })
+        XCTAssertTrue(registry.instances.isEmpty)
+
+        // A trailing event arriving right after we SIGTERM'd must not resurrect the row.
+        registry.apply(event: makeEvent(kind: .stop, id: "old", project: "/a", at: clock, pid: 40))
+        XCTAssertTrue(registry.instances.isEmpty, "Late event must not resurrect an auto-closed session")
+    }
+
     private func makeEvent(
         kind: HookEventKind,
         id: String,

@@ -165,6 +165,46 @@ final class InstanceRegistry {
         instances.removeAll { $0.state == .crashed && $0.lastActivity < cutoff }
     }
 
+    /// IDs of sessions idle longer than `threshold`. Sessions awaiting the user are never
+    /// counted as stale — they need attention, not hiding. Drives the panel's collapsed
+    /// "stale" grouping.
+    func staleInstanceIDs(threshold: TimeInterval) -> [String] {
+        staleInstances(threshold: threshold).map(\.id)
+    }
+
+    /// Sends SIGTERM to every session idle past `threshold` and drops it from the registry.
+    /// Used only when the user opts into auto-close. `terminate` is injected so tests never
+    /// signal real processes; reaped ids enter the grace window so a late event can't
+    /// resurrect a row we just closed.
+    func autoCloseStaleInstances(
+        threshold: TimeInterval,
+        terminate: (pid_t) -> Void = InstanceRegistry.terminateProcess
+    ) {
+        let stale = staleInstances(threshold: threshold)
+        guard !stale.isEmpty else { return }
+        let reapedAt = now()
+        for instance in stale {
+            if let pid = instance.pid {
+                terminate(pid)
+            }
+            recentlyReaped[instance.id] = reapedAt
+            Self.logger.info("Auto-closing idle session: \(instance.id, privacy: .public)")
+        }
+        let staleIDs = Set(stale.map(\.id))
+        instances.removeAll { staleIDs.contains($0.id) }
+    }
+
+    private func staleInstances(threshold: TimeInterval) -> [ClaudeInstance] {
+        let cutoff = now().addingTimeInterval(-threshold)
+        return instances.filter { !$0.needsAttention && $0.lastActivity < cutoff }
+    }
+
+    /// SIGTERM lets Claude Code shut down cleanly (flush transcript, run SessionEnd) rather
+    /// than dropping it with SIGKILL.
+    nonisolated static func terminateProcess(_ pid: pid_t) {
+        kill(pid, SIGTERM)
+    }
+
     /// Arms or disarms auto-yes for a single session. No-op if the session is unknown.
     func setAutoYes(sessionId: String, enabled: Bool) {
         guard let index = instances.firstIndex(where: { $0.id == sessionId }) else { return }
