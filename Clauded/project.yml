@@ -12,6 +12,19 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     SWIFT_STRICT_CONCURRENCY: complete
     CLANG_ENABLE_CODE_COVERAGE: NO
+  configs:
+    # Sign Debug builds with the shared Developer ID identity so the code
+    # signature, and the TCC grants keyed to it (Accessibility, Automation), stay
+    # stable across rebuilds and identical to the released app. Default ad-hoc
+    # signing changes the cdhash on every build, so macOS silently drops the
+    # Accessibility grant and auto-yes keystrokes stop landing. Baking it in here
+    # rather than only in the Makefile means Xcode IDE runs are covered too, not
+    # just `make build`/`make run`. Release signing is handled by CI, so it's left
+    # untouched.
+    Debug:
+      CODE_SIGN_STYLE: Manual
+      CODE_SIGN_IDENTITY: "Developer ID Application"
+      DEVELOPMENT_TEAM: BCB43KG62T
 
 targets:
   Clauded:
