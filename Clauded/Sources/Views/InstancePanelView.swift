@@ -7,9 +7,11 @@ struct InstancePanelView: View {
     @Environment(AccessibilityPermissionState.self) private var accessibilityState
     @Environment(KeyBindingsStore.self) private var keyBindings
     @Environment(QuickReplyController.self) private var quickReply
+    @Environment(IdleReaperStore.self) private var idleReaper
     @Environment(\.openSettings) private var openSettingsAction
 
     @State private var selectedId: String?
+    @State private var staleExpanded = false
     @FocusState private var panelFocused: Bool
 
     let onClose: () -> Void
@@ -213,47 +215,74 @@ struct InstancePanelView: View {
         .padding()
     }
 
+    /// IDs the panel should tuck into the stale group — empty unless the user chose the
+    /// `.collapse` behaviour, so the default panel is untouched.
+    private var staleIDs: Set<String> {
+        guard idleReaper.behavior == .collapse else { return [] }
+        return Set(registry.staleInstanceIDs(threshold: idleReaper.threshold))
+    }
+
     private var list: some View {
-        ScrollView {
+        let rows = registry.sortedInstances
+        let staleIDs = staleIDs
+        let fresh = rows.filter { !staleIDs.contains($0.id) }
+        let stale = rows.filter { staleIDs.contains($0.id) }
+        return ScrollView {
             LazyVStack(spacing: 4) {
-                ForEach(registry.sortedInstances) { instance in
-                    InstanceRow(
-                        instance: instance,
-                        isSelected: instance.id == selectedId,
-                        quickReplies: quickReply.store.enabled ? quickReply.store.responses : [],
-                        onTap: {
-                            // Keep mouse and keyboard selection in sync so a subsequent
-                            // keypress picks up where the user clicked.
-                            selectedId = instance.id
-                            // Crashed rows have no live terminal to focus — tapping
-                            // dismisses the marker instead, matching the issue spec.
-                            if instance.state == .crashed {
-                                registry.remove(sessionId: instance.id)
-                                return
-                            }
-                            // Close the popover first so macOS's activation-restoration has
-                            // already flushed by the time we bring the terminal to the front;
-                            // otherwise the popover close fires after our activate and reverts
-                            // focus to whichever app was frontmost before the popover opened.
-                            onClose()
-                            TerminalFocuser.focus(pid: instance.pid)
-                        },
-                        onToggleAutoYes: {
-                            selectedId = instance.id
-                            registry.setAutoYes(
-                                sessionId: instance.id,
-                                enabled: !instance.autoYesEnabled
-                            )
-                        },
-                        onQuickReply: { reply in
-                            selectedId = instance.id
-                            quickReply.send(reply, to: instance)
-                        }
-                    )
+                ForEach(fresh) { row(for: $0) }
+                if !stale.isEmpty {
+                    staleGroup(stale)
                 }
             }
             .padding(8)
         }
+    }
+
+    private func staleGroup(_ stale: [ClaudeInstance]) -> some View {
+        DisclosureGroup(isExpanded: $staleExpanded) {
+            ForEach(stale) { row(for: $0) }
+        } label: {
+            Text("Stale (\(stale.count))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func row(for instance: ClaudeInstance) -> some View {
+        InstanceRow(
+            instance: instance,
+            isSelected: instance.id == selectedId,
+            quickReplies: quickReply.store.enabled ? quickReply.store.responses : [],
+            onTap: {
+                // Keep mouse and keyboard selection in sync so a subsequent
+                // keypress picks up where the user clicked.
+                selectedId = instance.id
+                // Crashed rows have no live terminal to focus — tapping
+                // dismisses the marker instead, matching the issue spec.
+                if instance.state == .crashed {
+                    registry.remove(sessionId: instance.id)
+                    return
+                }
+                // Close the popover first so macOS's activation-restoration has
+                // already flushed by the time we bring the terminal to the front;
+                // otherwise the popover close fires after our activate and reverts
+                // focus to whichever app was frontmost before the popover opened.
+                onClose()
+                TerminalFocuser.focus(pid: instance.pid)
+            },
+            onToggleAutoYes: {
+                selectedId = instance.id
+                registry.setAutoYes(
+                    sessionId: instance.id,
+                    enabled: !instance.autoYesEnabled
+                )
+            },
+            onQuickReply: { reply in
+                selectedId = instance.id
+                quickReply.send(reply, to: instance)
+            }
+        )
     }
 
     private var footer: some View {
