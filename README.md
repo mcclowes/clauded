@@ -1,3 +1,5 @@
+Archived in favour of [Saggar](https://saggar.marginalutility.dev/)
+
 # Clauded
 
 [![Release](https://github.com/mcclowes/clauded/actions/workflows/release.yml/badge.svg)](https://github.com/mcclowes/clauded/actions/workflows/release.yml)
