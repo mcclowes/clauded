@@ -115,6 +115,7 @@ struct InstanceRow: View {
         switch instance.state {
         case .idle: .gray
         case .working: .blue
+        case .stuck: .yellow
         case .awaitingInput: .orange
         case .finished: .green
         case .crashed: .red
@@ -130,6 +131,7 @@ struct InstanceRow: View {
         switch instance.state {
         case .idle: "Idle"
         case .working: "Working…"
+        case .stuck: "Stuck — no activity for a while"
         case .awaitingInput: "Waiting for input"
         case .finished: "Finished"
         case .crashed: "Crashed — session ended unexpectedly"

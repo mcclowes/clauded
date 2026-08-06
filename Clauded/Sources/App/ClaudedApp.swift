@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? await Task.sleep(for: .seconds(30))
                 self?.registry.reapDeadInstances()
                 self?.registry.dismissStaleCrashedInstances()
+                self?.registry.markStuckInstances()
             }
         }
 
