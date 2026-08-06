@@ -7,6 +7,7 @@ private enum Defaults {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let registry = InstanceRegistry()
+    let dailySummary = DailySummaryService()
     let hookInstallState = HookInstallState()
     let accessibilityState = AccessibilityPermissionState()
     let launchAtLogin = LaunchAtLoginController()
@@ -49,6 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             notifier?.notifyAwaitingInput(instance)
         }
 
+        registry.onEvent = { [weak self] event in
+            self?.dailySummary.record(event: event)
+        }
+
         // Claude Code's SessionEnd hook doesn't fire when a terminal tab/window is
         // closed abruptly, so instances would otherwise linger forever. Sweep the
         // registry periodically to drop sessions whose processes are gone.
@@ -57,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try? await Task.sleep(for: .seconds(30))
                 self?.registry.reapDeadInstances()
                 self?.registry.dismissStaleCrashedInstances()
+                self?.dailySummary.rolloverIfNeeded()
             }
         }
 
@@ -66,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         .environment(registry)
+        .environment(dailySummary)
         .environment(hookInstallState)
         .environment(accessibilityState)
         .environment(keyBindings)

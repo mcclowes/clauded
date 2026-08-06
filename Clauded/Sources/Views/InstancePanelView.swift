@@ -3,6 +3,7 @@ import SwiftUI
 
 struct InstancePanelView: View {
     @Environment(InstanceRegistry.self) private var registry
+    @Environment(DailySummaryService.self) private var dailySummary
     @Environment(HookInstallState.self) private var hookState
     @Environment(AccessibilityPermissionState.self) private var accessibilityState
     @Environment(KeyBindingsStore.self) private var keyBindings
@@ -17,6 +18,8 @@ struct InstancePanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            Divider()
+            todaySummary
             if hookState.status != .installed {
                 Divider()
                 hookWarningBanner
@@ -42,6 +45,9 @@ struct InstancePanelView: View {
             // Re-poll each time the popover opens so the banner disappears as soon
             // as the user grants access in System Settings — no restart needed.
             accessibilityState.refresh()
+            // Catch a midnight crossing that happened while the popover was closed so the
+            // "Today" counts are current the instant the user opens it.
+            dailySummary.rolloverIfNeeded()
         }
         .onKeyPress(phases: .down) { press in
             handleKeyPress(press)
@@ -180,6 +186,37 @@ struct InstancePanelView: View {
             turboToggle
         }
         .padding(12)
+    }
+
+    private var todaySummary: some View {
+        HStack(spacing: 0) {
+            summaryStat(value: dailySummary.sessionsStarted, label: "Started")
+            summaryDivider
+            summaryStat(value: dailySummary.promptsSubmitted, label: "Prompts")
+            summaryDivider
+            summaryStat(value: dailySummary.attentionEvents, label: "Waiting")
+            summaryDivider
+            summaryStat(value: registry.instances.count, label: "Active")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .help("Today's activity — resets at midnight")
+    }
+
+    private func summaryStat(value: Int, label: String) -> some View {
+        VStack(spacing: 1) {
+            Text("\(value)")
+                .font(.system(.callout, design: .rounded, weight: .semibold))
+                .monospacedDigit()
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var summaryDivider: some View {
+        Divider().frame(height: 22)
     }
 
     private var turboToggle: some View {
